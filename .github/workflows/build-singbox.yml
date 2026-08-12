@@ -27,10 +27,6 @@ env:
   # Latest Go 1.26 patch release
   GO_VERSION: "1.26.x"
 
-  # Requested UPX version
-  UPX_VERSION: "5.2.0"
-
-
 # ==============================================================
 # Detect reF1nd Stable version
 # ==============================================================
@@ -225,6 +221,10 @@ jobs:
           cache: true
 
 
+      # ========================================================
+      # Show build environment
+      # ========================================================
+
       - name: Show build environment
         shell: bash
         run: |
@@ -267,6 +267,8 @@ jobs:
             -tags "${BUILD_TAGS}" \
             -o "${OUTPUT}" \
             ./cmd/sing-box
+
+          chmod +x "${OUTPUT}"
 
           ls -lh "${OUTPUT}"
 
@@ -358,82 +360,10 @@ jobs:
 
 
       # ========================================================
-      # Install UPX
-      # ========================================================
-
-      - name: Install UPX
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          URL="https://github.com/upx/upx/releases/download/v${UPX_VERSION}/upx-${UPX_VERSION}-amd64_linux.tar.xz"
-
-          echo "Downloading:"
-          echo "${URL}"
-
-          curl -fL \
-            "${URL}" \
-            -o /tmp/upx.tar.xz
-
-          mkdir -p /tmp/upx
-
-          tar -xJf \
-            /tmp/upx.tar.xz \
-            -C /tmp/upx \
-            --strip-components=1
-
-          sudo install \
-            /tmp/upx/upx \
-            /usr/local/bin/upx
-
-          upx --version
-
-
-      # ========================================================
-      # Maximum UPX compression
-      # ========================================================
-
-      - name: UPX compress Stable
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          OUTPUT="sing-box-${{ matrix.name }}"
-
-          echo "Before:"
-          ls -lh "${OUTPUT}"
-
-          upx \
-            --best \
-            --lzma \
-            "${OUTPUT}"
-
-          echo
-          echo "After:"
-          ls -lh "${OUTPUT}"
-
-
-      # ========================================================
-      # UPX integrity
-      # ========================================================
-
-      - name: Test Stable UPX
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          OUTPUT="sing-box-${{ matrix.name }}"
-
-          upx -t "${OUTPUT}"
-
-          echo "UPX test: PASS"
-
-
-      # ========================================================
       # Final filename
       #
       # Linux:
-      #   .upx is intentional for ShellCrash detection.
+      #   Keep the binary uncompressed.
       #
       # Windows:
       #   .exe remains the normal executable extension.
@@ -446,13 +376,7 @@ jobs:
 
           OUTPUT="sing-box-${{ matrix.name }}"
 
-          if [ "${GOOS}" = "linux" ]; then
-
-            mv \
-              "${OUTPUT}" \
-              "${OUTPUT}.upx"
-
-          else
+          if [ "${GOOS}" = "windows" ]; then
 
             mv \
               "${OUTPUT}" \
@@ -474,9 +398,8 @@ jobs:
           name: stable-${{ matrix.name }}
 
           path: |
-            *.upx
-            *.exe
-
+            sing-box-*
+          
           if-no-files-found: error
 
 
@@ -500,24 +423,36 @@ jobs:
 
         include:
 
+          # ----------------------------------------------------
           # OpenWrt ARM64
+          # ----------------------------------------------------
+
           - name: linux-arm64
             goos: linux
             goarch: arm64
 
+          # ----------------------------------------------------
           # OpenWrt ARM32 / ARMv7
+          # ----------------------------------------------------
+
           - name: linux-armv7
             goos: linux
             goarch: arm
             goarm: "7"
 
+          # ----------------------------------------------------
           # Linux x86_64
+          # ----------------------------------------------------
+
           - name: linux-amd64
             goos: linux
             goarch: amd64
             goamd64: v1
 
+          # ----------------------------------------------------
           # Windows x86_64
+          # ----------------------------------------------------
+
           - name: windows-amd64
             goos: windows
             goarch: amd64
@@ -563,6 +498,34 @@ jobs:
 
 
       # ========================================================
+      # Show build environment
+      # ========================================================
+
+      - name: Show build environment
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Go:"
+          go version
+
+          echo
+          echo "Target:"
+          echo "GOOS=${GOOS}"
+          echo "GOARCH=${GOARCH}"
+          echo "GOARM=${GOARM:-}"
+          echo "GOAMD64=${GOAMD64:-}"
+
+          echo
+          echo "Version:"
+          echo "${VERSION}"
+
+          echo
+          echo "Tags:"
+          echo "${BUILD_TAGS}"
+
+
+      # ========================================================
       # Build
       # ========================================================
 
@@ -580,6 +543,8 @@ jobs:
             -tags "${BUILD_TAGS}" \
             -o "${OUTPUT}" \
             ./cmd/sing-box
+
+          chmod +x "${OUTPUT}"
 
           ls -lh "${OUTPUT}"
 
@@ -665,68 +630,6 @@ jobs:
 
 
       # ========================================================
-      # UPX
-      # ========================================================
-
-      - name: Install UPX
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          URL="https://github.com/upx/upx/releases/download/v${UPX_VERSION}/upx-${UPX_VERSION}-amd64_linux.tar.xz"
-
-          curl -fL \
-            "${URL}" \
-            -o /tmp/upx.tar.xz
-
-          mkdir -p /tmp/upx
-
-          tar -xJf \
-            /tmp/upx.tar.xz \
-            -C /tmp/upx \
-            --strip-components=1
-
-          sudo install \
-            /tmp/upx/upx \
-            /usr/local/bin/upx
-
-          upx --version
-
-
-      # ========================================================
-      # Maximum compression
-      # ========================================================
-
-      - name: UPX compress Testing
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          OUTPUT="sing-box-${{ matrix.name }}"
-
-          upx \
-            --best \
-            --lzma \
-            "${OUTPUT}"
-
-          ls -lh "${OUTPUT}"
-
-
-      # ========================================================
-      # UPX test
-      # ========================================================
-
-      - name: Test Testing UPX
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          OUTPUT="sing-box-${{ matrix.name }}"
-
-          upx -t "${OUTPUT}"
-
-
-      # ========================================================
       # Rename
       # ========================================================
 
@@ -737,13 +640,7 @@ jobs:
 
           OUTPUT="sing-box-${{ matrix.name }}"
 
-          if [ "${GOOS}" = "linux" ]; then
-
-            mv \
-              "${OUTPUT}" \
-              "${OUTPUT}.upx"
-
-          else
+          if [ "${GOOS}" = "windows" ]; then
 
             mv \
               "${OUTPUT}" \
@@ -765,8 +662,7 @@ jobs:
           name: testing-${{ matrix.name }}
 
           path: |
-            *.upx
-            *.exe
+            sing-box-*
 
           if-no-files-found: error
 
@@ -842,7 +738,7 @@ jobs:
             find release/stable \
               -maxdepth 1 \
               -type f \
-              \( -name "*.upx" -o -name "*.exe" \) |
+              \( -name "sing-box-linux-*" -o -name "sing-box-windows-*.exe" \) |
             wc -l
           )"
 
@@ -850,7 +746,7 @@ jobs:
             find release/testing \
               -maxdepth 1 \
               -type f \
-              \( -name "*.upx" -o -name "*.exe" \) |
+              \( -name "sing-box-linux-*" -o -name "sing-box-windows-*.exe" \) |
             wc -l
           )"
 
@@ -876,7 +772,7 @@ jobs:
 
           find . \
             -type f \
-            \( -name "*.upx" -o -name "*.exe" \) \
+            \( -name "sing-box-linux-*" -o -name "sing-box-windows-*.exe" \) \
             -print0 |
           sort -z |
           xargs -0 sha256sum \
@@ -913,13 +809,10 @@ jobs:
 
           \`${GO_VERSION}\`
 
-          ## UPX
+          ## Compression
 
-          \`${UPX_VERSION}\`
-
-          Compression:
-
-          \`upx --best --lzma\`
+          None. Binaries are released in their original
+          uncompressed executable format.
 
           ## Supported protocols / features
 
@@ -941,21 +834,20 @@ jobs:
 
           ## OpenWrt
 
-          Linux binaries are UPX-compressed and use the
-          \`.upx\` extension intentionally for ShellCrash
-          core detection.
+          Linux binaries are uncompressed.
+
+          Users who need UPX compression can compress the
+          binaries locally using their preferred UPX version.
 
           Files:
 
-          - sing-box-linux-arm64.upx
-          - sing-box-linux-armv7.upx
-          - sing-box-linux-amd64.upx
+          - sing-box-linux-arm64
+          - sing-box-linux-armv7
+          - sing-box-linux-amd64
 
           ## Windows
 
           - sing-box-windows-amd64.exe
-
-          The Windows executable is already UPX-compressed.
 
           EOF
 
@@ -980,7 +872,9 @@ jobs:
               --repo "${GITHUB_REPOSITORY}" \
               --yes \
               --cleanup-tag
+
           fi
+
 
       # ========================================================
       # Create draft release
@@ -1015,10 +909,14 @@ jobs:
           set -euo pipefail
 
           gh release upload sing-box \
-            release/stable/*.upx \
-            release/stable/*.exe \
-            release/testing/*.upx \
-            release/testing/*.exe \
+            release/stable/sing-box-linux-arm64 \
+            release/stable/sing-box-linux-armv7 \
+            release/stable/sing-box-linux-amd64 \
+            release/stable/sing-box-windows-amd64.exe \
+            release/testing/sing-box-linux-arm64 \
+            release/testing/sing-box-linux-armv7 \
+            release/testing/sing-box-linux-amd64 \
+            release/testing/sing-box-windows-amd64.exe \
             release/SHA256SUMS \
             --repo "${GITHUB_REPOSITORY}"
 
