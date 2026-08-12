@@ -1,1 +1,1 @@
-# eggy-singbox-reF1nd-core
+# eggy custom singbox-reF1nd-core
