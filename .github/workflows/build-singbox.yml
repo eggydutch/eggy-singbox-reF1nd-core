@@ -19,13 +19,18 @@ env:
   # with_clash_api  = Clash API
   #
   # AnyTLS does not require an additional build tag.
-  # NaiveProxy is intentionally NOT included.
+  #
+  # NaiveProxy intentionally NOT included in this test.
   # ============================================================
 
   BUILD_TAGS: "with_quic,with_utls,with_clash_api"
 
   # Latest Go 1.26 patch release
   GO_VERSION: "1.26.x"
+
+  # UPX
+  UPX_VERSION: "5.2.0"
+
 
 # ==============================================================
 # Detect reF1nd Stable version
@@ -34,6 +39,7 @@ env:
 jobs:
 
   stable_version:
+
     name: Detect Stable version
 
     runs-on: ubuntu-latest
@@ -82,6 +88,7 @@ jobs:
 # ==============================================================
 
   testing_version:
+
     name: Detect Testing version
 
     runs-on: ubuntu-latest
@@ -222,6 +229,36 @@ jobs:
 
 
       # ========================================================
+      # Install UPX
+      # ========================================================
+
+      - name: Setup UPX
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          UPX_VERSION="${UPX_VERSION}"
+
+          curl -fsSL \
+            "https://github.com/upx/upx/releases/download/v${UPX_VERSION}/upx-${UPX_VERSION}-amd64_linux.tar.xz" \
+            -o /tmp/upx.tar.xz
+
+          mkdir -p /tmp/upx
+
+          tar -xJf \
+            /tmp/upx.tar.xz \
+            -C /tmp/upx \
+            --strip-components=1
+
+          sudo install \
+            -m 0755 \
+            /tmp/upx/upx \
+            /usr/local/bin/upx
+
+          upx --version
+
+
+      # ========================================================
       # Show build environment
       # ========================================================
 
@@ -232,6 +269,10 @@ jobs:
 
           echo "Go:"
           go version
+
+          echo
+          echo "UPX:"
+          upx --version
 
           echo
           echo "Target:"
@@ -286,7 +327,8 @@ jobs:
 
           OUTPUT="sing-box-${{ matrix.name }}"
 
-          echo "========== file =========="
+          echo "========== file BEFORE UPX =========="
+
           file "${OUTPUT}"
 
           if [ "${GOOS}" = "linux" ]; then
@@ -344,6 +386,8 @@ jobs:
 
       # ========================================================
       # Runtime test ONLY for native AMD64 Linux
+      #
+      # This happens BEFORE UPX.
       # ========================================================
 
       - name: Runtime test Stable AMD64
@@ -360,16 +404,88 @@ jobs:
 
 
       # ========================================================
+      # UPX compression
+      #
+      # IMPORTANT:
+      #
+      # The binary IS UPX compressed.
+      #
+      # BUT:
+      #
+      # Linux filename is intentionally NOT changed.
+      #
+      # Example:
+      #
+      # sing-box-linux-arm64
+      #
+      # remains:
+      #
+      # sing-box-linux-arm64
+      #
+      # even though its contents are UPX compressed.
+      # ========================================================
+
+      - name: UPX compress Stable
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OUTPUT="sing-box-${{ matrix.name }}"
+
+          echo "========== UPX BEFORE =========="
+
+          ls -lh "${OUTPUT}"
+
+          upx \
+            --best \
+            --lzma \
+            "${OUTPUT}"
+
+          echo
+          echo "========== UPX AFTER =========="
+
+          ls -lh "${OUTPUT}"
+
+          echo
+          echo "========== UPX TEST =========="
+
+          upx -t "${OUTPUT}"
+
+
+      # ========================================================
+      # Verify compressed binary
+      #
+      # file should identify it as UPX compressed.
+      # ========================================================
+
+      - name: Verify Stable UPX binary
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OUTPUT="sing-box-${{ matrix.name }}"
+
+          echo "========== file AFTER UPX =========="
+
+          file "${OUTPUT}"
+
+          echo
+          echo "========== UPX information =========="
+
+          upx -l "${OUTPUT}"
+
+
+      # ========================================================
       # Final filename
       #
       # Linux:
-      #   Keep the binary uncompressed.
+      #   NO .upx extension.
       #
       # Windows:
-      #   .exe remains the normal executable extension.
+      #   .exe remains.
       # ========================================================
 
-      - name: Rename Stable artifact
+      - name: Finalize Stable artifact
         shell: bash
         run: |
           set -euo pipefail
@@ -384,7 +500,8 @@ jobs:
 
           fi
 
-          ls -lh
+          echo "Final artifact:"
+          ls -lh "${OUTPUT}"*
 
 
       # ========================================================
@@ -395,11 +512,12 @@ jobs:
         uses: actions/upload-artifact@v7
 
         with:
+
           name: stable-${{ matrix.name }}
 
           path: |
             sing-box-*
-          
+
           if-no-files-found: error
 
 
@@ -424,7 +542,7 @@ jobs:
         include:
 
           # ----------------------------------------------------
-          # OpenWrt ARM64
+          # OpenWrt 64-bit ARM
           # ----------------------------------------------------
 
           - name: linux-arm64
@@ -432,7 +550,8 @@ jobs:
             goarch: arm64
 
           # ----------------------------------------------------
-          # OpenWrt ARM32 / ARMv7
+          # OpenWrt 32-bit ARM
+          # ARMv7
           # ----------------------------------------------------
 
           - name: linux-armv7
@@ -498,6 +617,36 @@ jobs:
 
 
       # ========================================================
+      # Install UPX
+      # ========================================================
+
+      - name: Setup UPX
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          UPX_VERSION="${UPX_VERSION}"
+
+          curl -fsSL \
+            "https://github.com/upx/upx/releases/download/v${UPX_VERSION}/upx-${UPX_VERSION}-amd64_linux.tar.xz" \
+            -o /tmp/upx.tar.xz
+
+          mkdir -p /tmp/upx
+
+          tar -xJf \
+            /tmp/upx.tar.xz \
+            -C /tmp/upx \
+            --strip-components=1
+
+          sudo install \
+            -m 0755 \
+            /tmp/upx/upx \
+            /usr/local/bin/upx
+
+          upx --version
+
+
+      # ========================================================
       # Show build environment
       # ========================================================
 
@@ -508,6 +657,10 @@ jobs:
 
           echo "Go:"
           go version
+
+          echo
+          echo "UPX:"
+          upx --version
 
           echo
           echo "Target:"
@@ -614,6 +767,8 @@ jobs:
 
       # ========================================================
       # Native runtime test
+      #
+      # BEFORE UPX.
       # ========================================================
 
       - name: Runtime test Testing AMD64
@@ -630,10 +785,70 @@ jobs:
 
 
       # ========================================================
-      # Rename
+      # UPX compression
+      #
+      # Linux filename stays unchanged.
       # ========================================================
 
-      - name: Rename Testing artifact
+      - name: UPX compress Testing
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OUTPUT="sing-box-${{ matrix.name }}"
+
+          echo "========== UPX BEFORE =========="
+
+          ls -lh "${OUTPUT}"
+
+          upx \
+            --best \
+            --lzma \
+            "${OUTPUT}"
+
+          echo
+          echo "========== UPX AFTER =========="
+
+          ls -lh "${OUTPUT}"
+
+          echo
+          echo "========== UPX TEST =========="
+
+          upx -t "${OUTPUT}"
+
+
+      # ========================================================
+      # Verify compressed binary
+      # ========================================================
+
+      - name: Verify Testing UPX binary
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OUTPUT="sing-box-${{ matrix.name }}"
+
+          echo "========== file AFTER UPX =========="
+
+          file "${OUTPUT}"
+
+          echo
+          echo "========== UPX information =========="
+
+          upx -l "${OUTPUT}"
+
+
+      # ========================================================
+      # Final filename
+      #
+      # Linux:
+      #   NO .upx extension.
+      #
+      # Windows:
+      #   .exe.
+      # ========================================================
+
+      - name: Finalize Testing artifact
         shell: bash
         run: |
           set -euo pipefail
@@ -648,7 +863,8 @@ jobs:
 
           fi
 
-          ls -lh
+          echo "Final artifact:"
+          ls -lh "${OUTPUT}"*
 
 
       # ========================================================
@@ -659,6 +875,7 @@ jobs:
         uses: actions/upload-artifact@v7
 
         with:
+
           name: testing-${{ matrix.name }}
 
           path: |
@@ -738,7 +955,11 @@ jobs:
             find release/stable \
               -maxdepth 1 \
               -type f \
-              \( -name "sing-box-linux-*" -o -name "sing-box-windows-*.exe" \) |
+              \( \
+                -name "sing-box-linux-*" \
+                -o \
+                -name "sing-box-windows-*.exe" \
+              \) |
             wc -l
           )"
 
@@ -746,7 +967,11 @@ jobs:
             find release/testing \
               -maxdepth 1 \
               -type f \
-              \( -name "sing-box-linux-*" -o -name "sing-box-windows-*.exe" \) |
+              \( \
+                -name "sing-box-linux-*" \
+                -o \
+                -name "sing-box-windows-*.exe" \
+              \) |
             wc -l
           )"
 
@@ -757,6 +982,34 @@ jobs:
           test "${TESTING_COUNT}" -eq 4
 
           echo "Artifact count: PASS"
+
+
+      # ========================================================
+      # Verify UPX compression in release artifacts
+      # ========================================================
+
+      - name: Verify release UPX
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "========== Stable UPX =========="
+
+          upx -t release/stable/sing-box-linux-arm64
+          upx -t release/stable/sing-box-linux-armv7
+          upx -t release/stable/sing-box-linux-amd64
+          upx -t release/stable/sing-box-windows-amd64.exe
+
+          echo
+          echo "========== Testing UPX =========="
+
+          upx -t release/testing/sing-box-linux-arm64
+          upx -t release/testing/sing-box-linux-armv7
+          upx -t release/testing/sing-box-linux-amd64
+          upx -t release/testing/sing-box-windows-amd64.exe
+
+          echo
+          echo "UPX verification: PASS"
 
 
       # ========================================================
@@ -772,7 +1025,11 @@ jobs:
 
           find . \
             -type f \
-            \( -name "sing-box-linux-*" -o -name "sing-box-windows-*.exe" \) \
+            \( \
+              -name "sing-box-linux-*" \
+              -o \
+              -name "sing-box-windows-*.exe" \
+            \) \
             -print0 |
           sort -z |
           xargs -0 sha256sum \
@@ -809,10 +1066,23 @@ jobs:
 
           \`${GO_VERSION}\`
 
-          ## Compression
+          ## UPX
 
-          None. Binaries are released in their original
-          uncompressed executable format.
+          \`${UPX_VERSION}\`
+
+          Linux and Windows binaries are UPX compressed
+          using:
+
+          \`upx --best --lzma\`
+
+          IMPORTANT:
+
+          The Linux binaries are UPX compressed but
+          intentionally keep their normal filenames
+          without the \`.upx\` extension.
+
+          This is intentional for compatibility testing
+          with ShellCrash.
 
           ## Supported protocols / features
 
@@ -828,22 +1098,24 @@ jobs:
           - ARMv7 / 32-bit ARM
           - AMD64 / x86_64
 
-          ## Windows architectures
+          ## Windows architecture
 
           - AMD64 / x86_64
 
           ## OpenWrt
 
-          Linux binaries are uncompressed.
-
-          Users who need UPX compression can compress the
-          binaries locally using their preferred UPX version.
-
-          Files:
+          Linux ARM binaries:
 
           - sing-box-linux-arm64
           - sing-box-linux-armv7
-          - sing-box-linux-amd64
+
+          The binaries above are already UPX compressed.
+
+          For ShellCrash, if its core manager requires
+          the \`.upx\` suffix, rename the downloaded binary
+          manually to:
+
+          \`CrashCore.upx\`
 
           ## Windows
 
@@ -898,6 +1170,13 @@ jobs:
 
       # ========================================================
       # Upload release assets
+      #
+      # IMPORTANT:
+      #
+      # No *.upx Linux assets.
+      #
+      # The files are UPX compressed internally but retain
+      # their normal filenames.
       # ========================================================
 
       - name: Upload release assets
