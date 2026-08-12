@@ -1,0 +1,1000 @@
+name: Build sing-box reF1nd
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    # 01:30 Singapore / 17:30 UTC
+    - cron: "30 17 * * *"
+
+permissions:
+  contents: write
+
+env:
+  # ============================================================
+  # Build features
+  #
+  # with_quic       = TUIC / Hysteria2
+  # with_utls       = VLESS Reality / Vision
+  # with_clash_api  = Clash API
+  #
+  # AnyTLS does not require an additional build tag.
+  # NaiveProxy is intentionally NOT included.
+  # ============================================================
+
+  BUILD_TAGS: "with_quic,with_utls,with_clash_api"
+
+  # Latest Go 1.26 patch release
+  GO_VERSION: "1.26.x"
+
+  # Requested UPX version
+  UPX_VERSION: "5.2.0"
+
+
+# ==============================================================
+# Detect reF1nd Stable version
+# ==============================================================
+
+jobs:
+
+  stable_version:
+    name: Detect Stable version
+
+    runs-on: ubuntu-latest
+
+    outputs:
+      version: ${{ steps.detect.outputs.version }}
+      tag: ${{ steps.detect.outputs.tag }}
+
+    steps:
+
+      - name: Detect latest reF1nd Stable tag
+        id: detect
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Fetching reF1nd tags..."
+
+          git ls-remote --tags --refs \
+            https://github.com/reF1nd/sing-box.git \
+            > /tmp/tags.txt
+
+          VERSION="$(
+            sed 's#.*refs/tags/v##' /tmp/tags.txt |
+            grep -E '^[0-9]+\.[0-9]+\.[0-9]+-reF1nd$' |
+            sort -V |
+            tail -n 1
+          )"
+
+          if [ -z "${VERSION}" ]; then
+            echo "ERROR: Cannot find reF1nd Stable tag."
+            exit 1
+          fi
+
+          TAG="v${VERSION}"
+
+          echo "Stable version: ${VERSION}"
+          echo "Stable tag:     ${TAG}"
+
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
+
+
+# ==============================================================
+# Detect reF1nd Testing version
+# ==============================================================
+
+  testing_version:
+    name: Detect Testing version
+
+    runs-on: ubuntu-latest
+
+    outputs:
+      version: ${{ steps.detect.outputs.version }}
+      tag: ${{ steps.detect.outputs.tag }}
+
+    steps:
+
+      - name: Detect latest reF1nd Testing tag
+        id: detect
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Fetching reF1nd tags..."
+
+          git ls-remote --tags --refs \
+            https://github.com/reF1nd/sing-box.git \
+            > /tmp/tags.txt
+
+          VERSION="$(
+            sed 's#.*refs/tags/v##' /tmp/tags.txt |
+            grep -E '^[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta|rc)\.[0-9]+-reF1nd.*$' |
+            sort -V |
+            tail -n 1
+          )"
+
+          if [ -z "${VERSION}" ]; then
+            echo "ERROR: Cannot find reF1nd Testing tag."
+            exit 1
+          fi
+
+          TAG="v${VERSION}"
+
+          echo "Testing version: ${VERSION}"
+          echo "Testing tag:     ${TAG}"
+
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
+
+
+# ==============================================================
+# Stable build
+# ==============================================================
+
+  stable_build:
+
+    name: Stable / ${{ matrix.name }}
+
+    needs:
+      - stable_version
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+
+      matrix:
+
+        include:
+
+          # ----------------------------------------------------
+          # OpenWrt 64-bit ARM
+          # AArch64
+          # ----------------------------------------------------
+
+          - name: linux-arm64
+            goos: linux
+            goarch: arm64
+
+          # ----------------------------------------------------
+          # OpenWrt 32-bit ARM
+          # ARMv7
+          # ----------------------------------------------------
+
+          - name: linux-armv7
+            goos: linux
+            goarch: arm
+            goarm: "7"
+
+          # ----------------------------------------------------
+          # Linux x86_64
+          # ----------------------------------------------------
+
+          - name: linux-amd64
+            goos: linux
+            goarch: amd64
+            goamd64: v1
+
+          # ----------------------------------------------------
+          # Windows x86_64
+          # ----------------------------------------------------
+
+          - name: windows-amd64
+            goos: windows
+            goarch: amd64
+            goamd64: v1
+
+    env:
+
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+      GOARM: ${{ matrix.goarm }}
+      GOAMD64: ${{ matrix.goamd64 }}
+
+      CGO_ENABLED: 0
+
+      VERSION: ${{ needs.stable_version.outputs.version }}
+      TAG: ${{ needs.stable_version.outputs.tag }}
+
+    steps:
+
+      # ========================================================
+      # Source
+      # ========================================================
+
+      - name: Checkout reF1nd Stable
+        uses: actions/checkout@v7
+
+        with:
+          repository: reF1nd/sing-box
+          ref: reF1nd-stable
+          fetch-depth: 0
+
+
+      # ========================================================
+      # Go
+      # ========================================================
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+
+      - name: Show build environment
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Go:"
+          go version
+
+          echo
+          echo "Target:"
+          echo "GOOS=${GOOS}"
+          echo "GOARCH=${GOARCH}"
+          echo "GOARM=${GOARM:-}"
+          echo "GOAMD64=${GOAMD64:-}"
+
+          echo
+          echo "Version:"
+          echo "${VERSION}"
+
+          echo
+          echo "Tags:"
+          echo "${BUILD_TAGS}"
+
+
+      # ========================================================
+      # Build
+      # ========================================================
+
+      - name: Build Stable
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OUTPUT="sing-box-${{ matrix.name }}"
+
+          go build \
+            -v \
+            -trimpath \
+            -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${VERSION}' -s -w -buildid=" \
+            -tags "${BUILD_TAGS}" \
+            -o "${OUTPUT}" \
+            ./cmd/sing-box
+
+          ls -lh "${OUTPUT}"
+
+
+      # ========================================================
+      # Verify binary architecture / format
+      #
+      # Do NOT execute ARM binaries on x86_64 GitHub runner.
+      # ========================================================
+
+      - name: Verify Stable binary
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OUTPUT="sing-box-${{ matrix.name }}"
+
+          echo "========== file =========="
+          file "${OUTPUT}"
+
+          if [ "${GOOS}" = "linux" ]; then
+
+            file "${OUTPUT}" | grep -q "ELF"
+
+            case "${GOARCH}" in
+
+              arm64)
+                file "${OUTPUT}" | grep -Eiq "ARM aarch64|ARM64"
+                ;;
+
+              arm)
+                file "${OUTPUT}" | grep -Eiq "ARM"
+                ;;
+
+              amd64)
+                file "${OUTPUT}" | grep -Eiq "x86-64|x86_64"
+                ;;
+
+            esac
+
+          elif [ "${GOOS}" = "windows" ]; then
+
+            file "${OUTPUT}" | grep -Eiq "PE32\+"
+
+          fi
+
+          echo
+          echo "Binary format / architecture: PASS"
+
+
+      # ========================================================
+      # Verify embedded build information
+      # ========================================================
+
+      - name: Verify Stable build tags
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OUTPUT="sing-box-${{ matrix.name }}"
+
+          strings "${OUTPUT}" > /tmp/singbox-strings.txt
+
+          grep -q "sing-box" /tmp/singbox-strings.txt
+          grep -q "with_quic" /tmp/singbox-strings.txt
+          grep -q "with_utls" /tmp/singbox-strings.txt
+          grep -q "with_clash_api" /tmp/singbox-strings.txt
+
+          echo "with_quic:       PASS"
+          echo "with_utls:       PASS"
+          echo "with_clash_api:  PASS"
+
+
+      # ========================================================
+      # Runtime test ONLY for native AMD64 Linux
+      # ========================================================
+
+      - name: Runtime test Stable AMD64
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OUTPUT="sing-box-${{ matrix.name }}"
+
+          chmod +x "${OUTPUT}"
+
+          "./${OUTPUT}" version
+
+
+      # ========================================================
+      # Install UPX
+      # ========================================================
+
+      - name: Install UPX
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          URL="https://github.com/upx/upx/releases/download/v${UPX_VERSION}/upx-${UPX_VERSION}-amd64_linux.tar.xz"
+
+          echo "Downloading:"
+          echo "${URL}"
+
+          curl -fL \
+            "${URL}" \
+            -o /tmp/upx.tar.xz
+
+          mkdir -p /tmp/upx
+
+          tar -xJf \
+            /tmp/upx.tar.xz \
+            -C /tmp/upx \
+            --strip-components=1
+
+          sudo install \
+            /tmp/upx/upx \
+            /usr/local/bin/upx
+
+          upx --version
+
+
+      # ========================================================
+      # Maximum UPX compression
+      # ========================================================
+
+      - name: UPX compress Stable
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OUTPUT="sing-box-${{ matrix.name }}"
+
+          echo "Before:"
+          ls -lh "${OUTPUT}"
+
+          upx \
+            --best \
+            --lzma \
+            "${OUTPUT}"
+
+          echo
+          echo "After:"
+          ls -lh "${OUTPUT}"
+
+
+      # ========================================================
+      # UPX integrity
+      # ========================================================
+
+      - name: Test Stable UPX
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OUTPUT="sing-box-${{ matrix.name }}"
+
+          upx -t "${OUTPUT}"
+
+          echo "UPX test: PASS"
+
+
+      # ========================================================
+      # Final filename
+      #
+      # Linux:
+      #   .upx is intentional for ShellCrash detection.
+      #
+      # Windows:
+      #   .exe remains the normal executable extension.
+      # ========================================================
+
+      - name: Rename Stable artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OUTPUT="sing-box-${{ matrix.name }}"
+
+          if [ "${GOOS}" = "linux" ]; then
+
+            mv \
+              "${OUTPUT}" \
+              "${OUTPUT}.upx"
+
+          else
+
+            mv \
+              "${OUTPUT}" \
+              "${OUTPUT}.exe"
+
+          fi
+
+          ls -lh
+
+
+      # ========================================================
+      # Artifact
+      # ========================================================
+
+      - name: Upload Stable artifact
+        uses: actions/upload-artifact@v7
+
+        with:
+          name: stable-${{ matrix.name }}
+
+          path: |
+            *.upx
+            *.exe
+
+          if-no-files-found: error
+
+
+# ==============================================================
+# Testing build
+# ==============================================================
+
+  testing_build:
+
+    name: Testing / ${{ matrix.name }}
+
+    needs:
+      - testing_version
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+
+      matrix:
+
+        include:
+
+          # OpenWrt ARM64
+          - name: linux-arm64
+            goos: linux
+            goarch: arm64
+
+          # OpenWrt ARM32 / ARMv7
+          - name: linux-armv7
+            goos: linux
+            goarch: arm
+            goarm: "7"
+
+          # Linux x86_64
+          - name: linux-amd64
+            goos: linux
+            goarch: amd64
+            goamd64: v1
+
+          # Windows x86_64
+          - name: windows-amd64
+            goos: windows
+            goarch: amd64
+            goamd64: v1
+
+    env:
+
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+      GOARM: ${{ matrix.goarm }}
+      GOAMD64: ${{ matrix.goamd64 }}
+
+      CGO_ENABLED: 0
+
+      VERSION: ${{ needs.testing_version.outputs.version }}
+      TAG: ${{ needs.testing_version.outputs.tag }}
+
+    steps:
+
+      # ========================================================
+      # Source
+      # ========================================================
+
+      - name: Checkout reF1nd Testing
+        uses: actions/checkout@v7
+
+        with:
+          repository: reF1nd/sing-box
+          ref: reF1nd-testing
+          fetch-depth: 0
+
+
+      # ========================================================
+      # Go
+      # ========================================================
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+
+      # ========================================================
+      # Build
+      # ========================================================
+
+      - name: Build Testing
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OUTPUT="sing-box-${{ matrix.name }}"
+
+          go build \
+            -v \
+            -trimpath \
+            -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${VERSION}' -s -w -buildid=" \
+            -tags "${BUILD_TAGS}" \
+            -o "${OUTPUT}" \
+            ./cmd/sing-box
+
+          ls -lh "${OUTPUT}"
+
+
+      # ========================================================
+      # Verify architecture / format
+      # ========================================================
+
+      - name: Verify Testing binary
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OUTPUT="sing-box-${{ matrix.name }}"
+
+          file "${OUTPUT}"
+
+          if [ "${GOOS}" = "linux" ]; then
+
+            file "${OUTPUT}" | grep -q "ELF"
+
+            case "${GOARCH}" in
+
+              arm64)
+                file "${OUTPUT}" | grep -Eiq "ARM aarch64|ARM64"
+                ;;
+
+              arm)
+                file "${OUTPUT}" | grep -Eiq "ARM"
+                ;;
+
+              amd64)
+                file "${OUTPUT}" | grep -Eiq "x86-64|x86_64"
+                ;;
+
+            esac
+
+          elif [ "${GOOS}" = "windows" ]; then
+
+            file "${OUTPUT}" | grep -Eiq "PE32\+"
+
+          fi
+
+          echo "Binary format / architecture: PASS"
+
+
+      # ========================================================
+      # Verify build tags
+      # ========================================================
+
+      - name: Verify Testing build tags
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OUTPUT="sing-box-${{ matrix.name }}"
+
+          strings "${OUTPUT}" > /tmp/singbox-strings.txt
+
+          grep -q "sing-box" /tmp/singbox-strings.txt
+          grep -q "with_quic" /tmp/singbox-strings.txt
+          grep -q "with_utls" /tmp/singbox-strings.txt
+          grep -q "with_clash_api" /tmp/singbox-strings.txt
+
+          echo "Required build tags: PASS"
+
+
+      # ========================================================
+      # Native runtime test
+      # ========================================================
+
+      - name: Runtime test Testing AMD64
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OUTPUT="sing-box-${{ matrix.name }}"
+
+          chmod +x "${OUTPUT}"
+
+          "./${OUTPUT}" version
+
+
+      # ========================================================
+      # UPX
+      # ========================================================
+
+      - name: Install UPX
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          URL="https://github.com/upx/upx/releases/download/v${UPX_VERSION}/upx-${UPX_VERSION}-amd64_linux.tar.xz"
+
+          curl -fL \
+            "${URL}" \
+            -o /tmp/upx.tar.xz
+
+          mkdir -p /tmp/upx
+
+          tar -xJf \
+            /tmp/upx.tar.xz \
+            -C /tmp/upx \
+            --strip-components=1
+
+          sudo install \
+            /tmp/upx/upx \
+            /usr/local/bin/upx
+
+          upx --version
+
+
+      # ========================================================
+      # Maximum compression
+      # ========================================================
+
+      - name: UPX compress Testing
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OUTPUT="sing-box-${{ matrix.name }}"
+
+          upx \
+            --best \
+            --lzma \
+            "${OUTPUT}"
+
+          ls -lh "${OUTPUT}"
+
+
+      # ========================================================
+      # UPX test
+      # ========================================================
+
+      - name: Test Testing UPX
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OUTPUT="sing-box-${{ matrix.name }}"
+
+          upx -t "${OUTPUT}"
+
+
+      # ========================================================
+      # Rename
+      # ========================================================
+
+      - name: Rename Testing artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OUTPUT="sing-box-${{ matrix.name }}"
+
+          if [ "${GOOS}" = "linux" ]; then
+
+            mv \
+              "${OUTPUT}" \
+              "${OUTPUT}.upx"
+
+          else
+
+            mv \
+              "${OUTPUT}" \
+              "${OUTPUT}.exe"
+
+          fi
+
+          ls -lh
+
+
+      # ========================================================
+      # Artifact
+      # ========================================================
+
+      - name: Upload Testing artifact
+        uses: actions/upload-artifact@v7
+
+        with:
+          name: testing-${{ matrix.name }}
+
+          path: |
+            *.upx
+            *.exe
+
+          if-no-files-found: error
+
+
+# ==============================================================
+# Release
+# ==============================================================
+
+  release:
+
+    name: Publish Release
+
+    needs:
+      - stable_version
+      - testing_version
+      - stable_build
+      - testing_build
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # ========================================================
+      # Download all artifacts
+      # ========================================================
+
+      - name: Download Stable artifacts
+        uses: actions/download-artifact@v7
+
+        with:
+          pattern: stable-*
+          path: release/stable
+          merge-multiple: true
+
+
+      - name: Download Testing artifacts
+        uses: actions/download-artifact@v7
+
+        with:
+          pattern: testing-*
+          path: release/testing
+          merge-multiple: true
+
+
+      # ========================================================
+      # Verify expected files
+      # ========================================================
+
+      - name: Verify release files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "========== Stable =========="
+
+          find release/stable \
+            -maxdepth 1 \
+            -type f \
+            -print
+
+          echo
+          echo "========== Testing =========="
+
+          find release/testing \
+            -maxdepth 1 \
+            -type f \
+            -print
+
+          echo
+          echo "========== Counts =========="
+
+          STABLE_COUNT="$(
+            find release/stable \
+              -maxdepth 1 \
+              -type f \
+              \( -name "*.upx" -o -name "*.exe" \) |
+            wc -l
+          )"
+
+          TESTING_COUNT="$(
+            find release/testing \
+              -maxdepth 1 \
+              -type f \
+              \( -name "*.upx" -o -name "*.exe" \) |
+            wc -l
+          )"
+
+          echo "Stable : ${STABLE_COUNT}"
+          echo "Testing: ${TESTING_COUNT}"
+
+          test "${STABLE_COUNT}" -eq 4
+          test "${TESTING_COUNT}" -eq 4
+
+          echo "Artifact count: PASS"
+
+
+      # ========================================================
+      # SHA256
+      # ========================================================
+
+      - name: Generate SHA256
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd release
+
+          find . \
+            -type f \
+            \( -name "*.upx" -o -name "*.exe" \) \
+            -print0 |
+          sort -z |
+          xargs -0 sha256sum \
+            > SHA256SUMS
+
+          cat SHA256SUMS
+
+
+      # ========================================================
+      # Release notes
+      # ========================================================
+
+      - name: Generate release notes
+        shell: bash
+        run: |
+
+          cat > release/RELEASE.md <<EOF
+
+          # sing-box reF1nd
+
+          ## Stable
+
+          v${{ needs.stable_version.outputs.version }}
+
+          ## Testing
+
+          v${{ needs.testing_version.outputs.version }}
+
+          ## Build tags
+
+          \`${BUILD_TAGS}\`
+
+          ## Go
+
+          \`${GO_VERSION}\`
+
+          ## UPX
+
+          \`${UPX_VERSION}\`
+
+          Compression:
+
+          \`upx --best --lzma\`
+
+          ## Supported protocols / features
+
+          - VLESS Reality / Vision
+          - TUIC
+          - Hysteria2
+          - AnyTLS
+          - Clash API
+
+          ## Linux architectures
+
+          - ARM64 / AArch64
+          - ARMv7 / 32-bit ARM
+          - AMD64 / x86_64
+
+          ## Windows architectures
+
+          - AMD64 / x86_64
+
+          ## OpenWrt
+
+          Linux binaries are UPX-compressed and use the
+          \`.upx\` extension intentionally for ShellCrash
+          core detection.
+
+          Files:
+
+          - sing-box-linux-arm64.upx
+          - sing-box-linux-armv7.upx
+          - sing-box-linux-amd64.upx
+
+          ## Windows
+
+          - sing-box-windows-amd64.exe
+
+          The Windows executable is already UPX-compressed.
+
+          EOF
+
+
+      # ========================================================
+      # Delete previous rolling release
+      # ==============================================================
+
+      - name: Delete previous release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+        run: |
+
+          gh release delete sing-box \
+            --repo "${GITHUB_REPOSITORY}" \
+            --yes \
+            --cleanup-tag || true
+
+
+      # ========================================================
+      # Create rolling release
+      # ==============================================================
+
+      - name: Create release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+        run: |
+
+          gh release create sing-box \
+            release/stable/*.upx \
+            release/stable/*.exe \
+            release/testing/*.upx \
+            release/testing/*.exe \
+            release/SHA256SUMS \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "sing-box reF1nd Latest" \
+            --notes-file release/RELEASE.md \
+            --target "${GITHUB_SHA}"
