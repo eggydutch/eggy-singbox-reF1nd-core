@@ -964,37 +964,77 @@ jobs:
       # Delete previous rolling release
       # ==============================================================
 
-      - name: Delete previous release
+      - name: Delete previous rolling release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
 
         run: |
+          set -euo pipefail
 
-          gh release delete sing-box \
+          if gh release view sing-box \
             --repo "${GITHUB_REPOSITORY}" \
-            --yes \
-            --cleanup-tag || true
+            >/dev/null 2>&1; then
+
+            gh release delete sing-box \
+              --repo "${GITHUB_REPOSITORY}" \
+              --yes \
+              --cleanup-tag
+          fi
+
+      # ========================================================
+      # Create draft release
+      # ========================================================
+
+      - name: Create draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+        run: |
+          set -euo pipefail
+
+          gh release create sing-box \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "sing-box reF1nd Latest" \
+            --notes-file release/RELEASE.md \
+            --target "${GITHUB_SHA}" \
+            --draft
 
 
       # ========================================================
-      # Create rolling release
-      # ==============================================================
+      # Upload release assets
+      # ========================================================
 
-      - name: Create release
+      - name: Upload release assets
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
 
         run: |
+          set -euo pipefail
 
-          gh release create sing-box \
+          gh release upload sing-box \
             release/stable/*.upx \
             release/stable/*.exe \
             release/testing/*.upx \
             release/testing/*.exe \
             release/SHA256SUMS \
+            --repo "${GITHUB_REPOSITORY}"
+
+
+      # ========================================================
+      # Publish release
+      # ========================================================
+
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+        run: |
+          set -euo pipefail
+
+          gh release edit sing-box \
             --repo "${GITHUB_REPOSITORY}" \
-            --title "sing-box reF1nd Latest" \
-            --notes-file release/RELEASE.md \
-            --target "${GITHUB_SHA}"
+            --draft=false
