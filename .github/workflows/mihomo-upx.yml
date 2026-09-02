@@ -13,6 +13,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Get latest stable Mihomo release
         id: mihomo
         env:
@@ -33,7 +36,6 @@ jobs:
           VERSION=$(echo "$RELEASE" | jq -r '.tag_name')
 
           echo "Latest stable Mihomo: $VERSION"
-
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
           echo "$RELEASE" > release.json
@@ -80,15 +82,15 @@ jobs:
 
           mkdir -p work release
 
-          ARMV7_URL=$(jq -r '
+          ARMV7_URL=$(jq -r --arg VERSION "$VERSION" '
             .assets[]
-            | select(.name == ("mihomo-linux-armv7-" + env.VERSION + ".gz"))
+            | select(.name == ("mihomo-linux-armv7-" + $VERSION + ".gz"))
             | .browser_download_url
           ' release.json)
 
-          ARM64_URL=$(jq -r '
+          ARM64_URL=$(jq -r --arg VERSION "$VERSION" '
             .assets[]
-            | select(.name == ("mihomo-linux-arm64-" + env.VERSION + ".gz"))
+            | select(.name == ("mihomo-linux-arm64-" + $VERSION + ".gz"))
             | .browser_download_url
           ' release.json)
 
@@ -98,8 +100,13 @@ jobs:
           test "$ARMV7_URL" != "null"
           test "$ARM64_URL" != "null"
 
-          wget -q "$ARMV7_URL" -O "work/mihomo-linux-armv7-${VERSION}.gz"
-          wget -q "$ARM64_URL" -O "work/mihomo-linux-arm64-${VERSION}.gz"
+          wget -q \
+            "$ARMV7_URL" \
+            -O "work/mihomo-linux-armv7-${VERSION}.gz"
+
+          wget -q \
+            "$ARM64_URL" \
+            -O "work/mihomo-linux-arm64-${VERSION}.gz"
 
           ls -lh work/
 
@@ -126,9 +133,6 @@ jobs:
 
           chmod +x release/*.upx
 
-          echo "Before UPX:"
-          ls -lh release/
-
           upx \
             --best \
             --lzma \
@@ -139,12 +143,13 @@ jobs:
             --lzma \
             "release/mihomo-linux-arm64-${VERSION}.upx"
 
-          echo "After UPX:"
-          ls -lh release/
+          upx -t \
+            "release/mihomo-linux-armv7-${VERSION}.upx"
 
-          echo "Testing UPX files..."
-          upx -t "release/mihomo-linux-armv7-${VERSION}.upx"
-          upx -t "release/mihomo-linux-arm64-${VERSION}.upx"
+          upx -t \
+            "release/mihomo-linux-arm64-${VERSION}.upx"
+
+          ls -lh release/
 
       - name: Generate SHA256
         if: steps.existing.outputs.exists == 'false'
@@ -206,3 +211,4 @@ jobs:
               "/repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" \
               || true
           done
+```
