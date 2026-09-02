@@ -2,7 +2,6 @@ name: Mihomo UPX Release
 
 on:
   schedule:
-    # 每日 UTC 02:00 執行
     - cron: "0 2 * * *"
   workflow_dispatch:
 
@@ -14,19 +13,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check latest stable Mihomo release
+      - name: Get latest stable Mihomo release
         id: mihomo
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -e
 
-          API="https://api.github.com/repos/MetaCubeX/mihomo/releases"
-
           RELEASE=$(curl -fsSL \
             -H "Authorization: Bearer ${GH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
-            "$API" |
+            "https://api.github.com/repos/MetaCubeX/mihomo/releases" |
             jq -r '
               map(select(.draft == false and .prerelease == false))
               | sort_by(.published_at)
@@ -39,7 +36,7 @@ jobs:
 
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-          echo "$RELEASE" > /tmp/release.json
+          echo "$RELEASE" > release.json
 
       - name: Check whether release already exists
         id: existing
@@ -65,17 +62,16 @@ jobs:
           wget -q \
             "https://github.com/upx/upx/releases/download/v${UPX_VERSION}/upx-${UPX_VERSION}-amd64_linux.tar.xz"
 
-          tar -xf "upx-${UPX_VERSION}-amd64_linux.tar.xz"
+          tar -xf \
+            "upx-${UPX_VERSION}-amd64_linux.tar.xz"
 
-          sudo cp \
+          sudo install -m 755 \
             "upx-${UPX_VERSION}-amd64_linux/upx" \
             /usr/local/bin/upx
 
-          sudo chmod +x /usr/local/bin/upx
-
           upx --version
 
-      - name: Download latest Mihomo Linux binaries
+      - name: Download Mihomo ARMv7 and ARM64
         if: steps.existing.outputs.exists == 'false'
         env:
           VERSION: ${{ steps.mihomo.outputs.version }}
@@ -84,92 +80,71 @@ jobs:
 
           mkdir -p work release
 
-          echo "Downloading Mihomo $VERSION"
-
-          jq -r '
+          ARMV7_URL=$(jq -r '
             .assets[]
-            | select(
-                .name
-                | test("linux")
-              )
+            | select(.name == ("mihomo-linux-armv7-" + env.VERSION + ".gz"))
             | .browser_download_url
-          ' /tmp/release.json > /tmp/assets.txt
+          ' release.json)
 
-          cat /tmp/assets.txt
+          ARM64_URL=$(jq -r '
+            .assets[]
+            | select(.name == ("mihomo-linux-arm64-" + env.VERSION + ".gz"))
+            | .browser_download_url
+          ' release.json)
 
-          while read -r URL; do
-            wget -q "$URL" -P work/
-          done < /tmp/assets.txt
+          echo "ARMv7: $ARMV7_URL"
+          echo "ARM64: $ARM64_URL"
 
-          ls -lah work/
+          test "$ARMV7_URL" != "null"
+          test "$ARM64_URL" != "null"
 
-      - name: Extract and UPX compress
+          wget -q "$ARMV7_URL" -O "work/mihomo-linux-armv7-${VERSION}.gz"
+          wget -q "$ARM64_URL" -O "work/mihomo-linux-arm64-${VERSION}.gz"
+
+          ls -lh work/
+
+      - name: Decompress and UPX
         if: steps.existing.outputs.exists == 'false'
         env:
           VERSION: ${{ steps.mihomo.outputs.version }}
         run: |
           set -e
 
-          cd work
+          gunzip \
+            "work/mihomo-linux-armv7-${VERSION}.gz"
 
-          for archive in *; do
-            case "$archive" in
-              *.tar.gz)
-                tar -xzf "$archive"
-                ;;
-              *.tar.xz)
-                tar -xJf "$archive"
-                ;;
-              *.zip)
-                unzip -q "$archive"
-                ;;
-            esac
-          done
+          gunzip \
+            "work/mihomo-linux-arm64-${VERSION}.gz"
 
-          echo "Extracted files:"
-          find . -type f -maxdepth 4 -print
+          mv \
+            "work/mihomo-linux-armv7-${VERSION}" \
+            "release/mihomo-linux-armv7-${VERSION}.upx"
 
-          cd ..
+          mv \
+            "work/mihomo-linux-arm64-${VERSION}" \
+            "release/mihomo-linux-arm64-${VERSION}.upx"
 
-          # 找出所有 Linux Mihomo executable
-          find work \
-            -type f \
-            -perm -111 \
-            ! -name "*.gz" \
-            ! -name "*.xz" \
-            ! -name "*.zip" \
-            -print0 |
-          while IFS= read -r -d '' binary; do
+          chmod +x release/*.upx
 
-            filename="$(basename "$binary")"
-
-            # 避免把其他附帶 executable 一齊壓縮
-            if file "$binary" | grep -qE 'ELF .* executable'; then
-
-              echo "========================================"
-              echo "Compressing: $binary"
-              echo "========================================"
-
-              cp "$binary" "release/${filename}.upx"
-
-              upx \
-                --best \
-                --lzma \
-                -o "release/${filename}.upx" \
-                "$binary"
-
-              chmod +x "release/${filename}.upx"
-
-              echo
-              echo "UPX result:"
-              upx -t "release/${filename}.upx"
-            fi
-
-          done
-
-          echo
-          echo "Final release files:"
+          echo "Before UPX:"
           ls -lh release/
+
+          upx \
+            --best \
+            --lzma \
+            "release/mihomo-linux-armv7-${VERSION}.upx"
+
+          upx \
+            --best \
+            --lzma \
+            "release/mihomo-linux-arm64-${VERSION}.upx"
+
+          echo "After UPX:"
+          ls -lh release/
+
+          echo "Testing UPX files..."
+          upx -t "release/mihomo-linux-armv7-${VERSION}.upx"
+          upx -t "release/mihomo-linux-arm64-${VERSION}.upx"
 
       - name: Generate SHA256
         if: steps.existing.outputs.exists == 'false'
@@ -178,7 +153,10 @@ jobs:
 
           cd release
 
-          sha256sum *.upx > SHA256SUMS
+          sha256sum \
+            mihomo-linux-armv7-*.upx \
+            mihomo-linux-arm64-*.upx \
+            > SHA256SUMS
 
           cat SHA256SUMS
 
@@ -201,8 +179,6 @@ jobs:
         run: |
           set -e
 
-          echo "Checking releases..."
-
           gh api \
             --paginate \
             -H "Accept: application/vnd.github+json" \
@@ -212,9 +188,9 @@ jobs:
             | reverse
             | .[2:]
             | .[]
-            | "\(.id) \(.tag_name)"
+            | "\(.id)\t\(.tag_name)"
           ' |
-          while read -r ID TAG; do
+          while IFS=$'\t' read -r ID TAG; do
             echo "Deleting old release: $TAG"
 
             gh api \
@@ -222,7 +198,8 @@ jobs:
               -H "Accept: application/vnd.github+json" \
               "/repos/${GITHUB_REPOSITORY}/releases/${ID}"
 
-            # Delete corresponding tag
+            echo "Deleting tag: $TAG"
+
             gh api \
               --method DELETE \
               -H "Accept: application/vnd.github+json" \
