@@ -211,4 +211,3 @@ jobs:
               "/repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" \
               || true
           done
-```
