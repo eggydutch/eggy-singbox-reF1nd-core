@@ -1174,27 +1174,35 @@ jobs:
 
 
           # ======================================================
-          # 1. Find and delete existing Release
+          # Delete Release
           # ======================================================
 
           echo
           echo "Checking existing release..."
 
-          RELEASE_ID="$(
+          HTTP_STATUS="$(
             gh api \
+              --include \
               "repos/${REPO}/releases/tags/${TAG}" \
-              --jq '.id' \
-              2>/dev/null \
+              2>/dev/null |
+            head -n 1 |
+            awk '{print $2}' \
             || true
           )"
 
-          if [ -n "${RELEASE_ID}" ]; then
+          echo "Release API status: ${HTTP_STATUS:-unknown}"
 
-            echo "Existing release found:"
+          if [ "${HTTP_STATUS}" = "200" ]; then
+
+            echo "Existing release found."
+
+            RELEASE_ID="$(
+              gh api \
+                "repos/${REPO}/releases/tags/${TAG}" |
+              jq -r '.id'
+            )"
+
             echo "Release ID: ${RELEASE_ID}"
-
-            echo
-            echo "Deleting release..."
 
             gh api \
               --method DELETE \
@@ -1202,26 +1210,21 @@ jobs:
 
             echo "Release deleted."
 
-          else
+          elif [ "${HTTP_STATUS}" = "404" ]; then
 
             echo "No existing release found."
+
+          else
+
+            echo "Unexpected GitHub API response."
+            echo "HTTP status: ${HTTP_STATUS}"
+            exit 1
 
           fi
 
 
           # ======================================================
-          # 2. Find and delete existing tag
-          #
-          # This is intentionally independent from release deletion.
-          #
-          # Possible states:
-          #
-          #   Release exists + tag exists
-          #   Release missing + tag exists
-          #   Release exists + tag missing
-          #   Neither exists
-          #
-          # All four states are handled safely.
+          # Delete tag
           # ======================================================
 
           echo
@@ -1232,8 +1235,6 @@ jobs:
             >/dev/null 2>&1; then
 
             echo "Existing tag found."
-
-            echo "Deleting tag..."
 
             gh api \
               --method DELETE \
