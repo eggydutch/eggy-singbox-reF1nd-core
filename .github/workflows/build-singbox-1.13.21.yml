@@ -1,0 +1,416 @@
+name: Build sing-box 1.13.21 reF1nd
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  VERSION: "1.13.21-reF1nd"
+  SOURCE_TAG: "v1.13.21-reF1nd"
+  GO_VERSION: "1.24.7"
+  UPX_VERSION: "5.2.0"
+  BUILD_TAGS: "with_quic,with_utls,with_clash_api"
+
+jobs:
+
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-arm64
+            goos: linux
+            goarch: arm64
+
+          - name: windows-amd64
+            goos: windows
+            goarch: amd64
+
+    env:
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+      CGO_ENABLED: 0
+
+    steps:
+
+      # ========================================================
+      # Checkout exact reF1nd 1.13.21 source
+      # ========================================================
+
+      - name: Checkout reF1nd 1.13.21
+        uses: actions/checkout@v7
+        with:
+          repository: reF1nd/sing-box
+          ref: ${{ env.SOURCE_TAG }}
+          fetch-depth: 0
+
+      # ========================================================
+      # Setup Go
+      # ========================================================
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # ========================================================
+      # Setup UPX
+      # ========================================================
+
+      - name: Setup UPX
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          UPX_URL="https://github.com/upx/upx/releases/download/v${UPX_VERSION}/upx-${UPX_VERSION}-amd64_linux.tar.xz"
+
+          echo "Downloading UPX ${UPX_VERSION}..."
+
+          curl \
+            -fL \
+            --retry 3 \
+            --retry-delay 5 \
+            --retry-all-errors \
+            --connect-timeout 20 \
+            --max-time 180 \
+            "${UPX_URL}" \
+            -o /tmp/upx.tar.xz
+
+          test -s /tmp/upx.tar.xz
+
+          rm -rf /tmp/upx
+          mkdir -p /tmp/upx
+
+          tar \
+            -xJf /tmp/upx.tar.xz \
+            -C /tmp/upx \
+            --strip-components=1
+
+          test -x /tmp/upx/upx
+
+          sudo install \
+            -m 0755 \
+            /tmp/upx/upx \
+            /usr/local/bin/upx
+
+          upx --version
+
+      # ========================================================
+      # Show environment
+      # ========================================================
+
+      - name: Show build environment
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "========== Go =========="
+          go version
+
+          echo
+          echo "========== UPX =========="
+          upx --version
+
+          echo
+          echo "========== Target =========="
+          echo "GOOS=${GOOS}"
+          echo "GOARCH=${GOARCH}"
+
+          echo
+          echo "========== Version =========="
+          echo "${VERSION}"
+
+          echo
+          echo "========== Source =========="
+          echo "${SOURCE_TAG}"
+
+          echo
+          echo "========== Build Tags =========="
+          echo "${BUILD_TAGS}"
+
+      # ========================================================
+      # Build
+      # ========================================================
+
+      - name: Build
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OUTPUT="sing-box-${VERSION}-${{ matrix.name }}"
+
+          go build \
+            -v \
+            -trimpath \
+            -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${VERSION}' -s -w -buildid=" \
+            -tags "${BUILD_TAGS}" \
+            -o "${OUTPUT}" \
+            ./cmd/sing-box
+
+          chmod +x "${OUTPUT}"
+
+          echo "========== BEFORE UPX =========="
+          ls -lh "${OUTPUT}"
+
+      # ========================================================
+      # Verify architecture
+      # ========================================================
+
+      - name: Verify architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OUTPUT="sing-box-${VERSION}-${{ matrix.name }}"
+
+          file "${OUTPUT}"
+
+          if [ "${GOOS}" = "linux" ]; then
+            file "${OUTPUT}" | grep -q "ELF"
+            file "${OUTPUT}" | grep -Eiq "ARM aarch64|ARM64"
+
+          elif [ "${GOOS}" = "windows" ]; then
+            file "${OUTPUT}" | grep -Eiq "PE32\+"
+          fi
+
+          echo "Architecture verification: PASS"
+
+      # ========================================================
+      # Verify build tags
+      # ========================================================
+
+      - name: Verify build tags
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OUTPUT="sing-box-${VERSION}-${{ matrix.name }}"
+
+          strings "${OUTPUT}" > /tmp/singbox-strings.txt
+
+          grep -q "sing-box" /tmp/singbox-strings.txt
+          grep -q "with_quic" /tmp/singbox-strings.txt
+          grep -q "with_utls" /tmp/singbox-strings.txt
+          grep -q "with_clash_api" /tmp/singbox-strings.txt
+
+          echo "Required build tags: PASS"
+
+      # ========================================================
+      # Native runtime test
+      # ========================================================
+
+      - name: Runtime test Linux ARM64
+        if: matrix.goos == 'linux' && matrix.goarch == 'arm64'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OUTPUT="sing-box-${VERSION}-${{ matrix.name }}"
+
+          echo "ARM64 binary cannot be executed on amd64 runner."
+          echo "Runtime execution test skipped."
+
+      # ========================================================
+      # UPX compression
+      # ========================================================
+
+      - name: UPX compress
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OUTPUT="sing-box-${VERSION}-${{ matrix.name }}"
+
+          echo "========== BEFORE =========="
+          ls -lh "${OUTPUT}"
+
+          upx \
+            --best \
+            --lzma \
+            "${OUTPUT}"
+
+          echo
+          echo "========== AFTER =========="
+          ls -lh "${OUTPUT}"
+
+          echo
+          echo "========== UPX TEST =========="
+          upx -t "${OUTPUT}"
+
+          echo
+          echo "========== UPX INFO =========="
+          upx -l "${OUTPUT}"
+
+      # ========================================================
+      # Finalize Windows extension
+      # ========================================================
+
+      - name: Finalize Windows artifact
+        if: matrix.goos == 'windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OUTPUT="sing-box-${VERSION}-${{ matrix.name }}"
+
+          mv \
+            "${OUTPUT}" \
+            "${OUTPUT}.exe"
+
+      # ========================================================
+      # Package
+      # ========================================================
+
+      - name: Package artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${GOOS}" = "linux" ]; then
+
+            FILE="sing-box-${VERSION}-${{ matrix.name }}"
+
+            tar \
+              -czf \
+              "${FILE}.tar.gz" \
+              "${FILE}"
+
+            sha256sum \
+              "${FILE}.tar.gz" \
+              > "${FILE}.tar.gz.sha256"
+
+          elif [ "${GOOS}" = "windows" ]; then
+
+            FILE="sing-box-${VERSION}-${{ matrix.name }}.exe"
+
+            zip \
+              "${FILE%.exe}.zip" \
+              "${FILE}"
+
+            sha256sum \
+              "${FILE%.exe}.zip" \
+              > "${FILE%.exe}.zip.sha256"
+
+          fi
+
+          echo "========== FINAL ARTIFACTS =========="
+          ls -lh sing-box-*
+
+      # ========================================================
+      # Upload Actions artifact
+      # ========================================================
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.name }}
+          path: |
+            sing-box-*.tar.gz
+            sing-box-*.zip
+            sing-box-*.sha256
+          if-no-files-found: error
+
+
+  # ==========================================================
+  # Publish dedicated release
+  # ==========================================================
+
+  release:
+    name: Publish 1.13.21 reF1nd Release
+    needs:
+      - build
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # ========================================================
+      # Download artifacts
+      # ========================================================
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: release
+          merge-multiple: true
+
+      # ========================================================
+      # Generate combined checksums
+      # ========================================================
+
+      - name: Generate SHA256SUMS
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd release
+
+          cat \
+            *.sha256 \
+            > SHA256SUMS
+
+          echo "========== SHA256SUMS =========="
+          cat SHA256SUMS
+
+      # ========================================================
+      # Verify files
+      # ========================================================
+
+      - name: Verify release files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "========== Release files =========="
+
+          find release \
+            -maxdepth 1 \
+            -type f \
+            -print
+
+          echo
+          echo "========== SHA256 verification =========="
+
+          cd release
+
+          sha256sum -c SHA256SUMS
+
+      # ========================================================
+      # Create dedicated release
+      # ========================================================
+
+      - name: Publish dedicated release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.13.21-reF1nd-custom
+          name: sing-box 1.13.21-reF1nd custom
+          body: |
+            # sing-box 1.13.21-reF1nd
+
+            Custom build based on:
+
+            - Source: `reF1nd/sing-box`
+            - Tag: `v1.13.21-reF1nd`
+            - Go: `1.24.7`
+            - CGO: disabled
+            - Build tags: `with_quic,with_utls,with_clash_api`
+            - UPX: `5.2.0`
+            - Compression: `--best --lzma`
+
+            Targets:
+
+            - Linux ARM64
+            - Windows AMD64
+
+            This is a separate release and does not modify the repository's existing rolling `sing-box` release.
+          files: |
+            release/*
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
