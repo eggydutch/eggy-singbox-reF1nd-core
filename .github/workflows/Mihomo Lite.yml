@@ -10,7 +10,7 @@ permissions:
 
 env:
   MIHOMO_REPO: https://github.com/MetaCubeX/mihomo.git
-  BUILD_TAGS: no_tailscale,no_zerotier,no_easytier,no_fake_tcp,with_low_memory
+  BUILD_TAGS: no_tailscale,no_zerotier,no_easytier,no_fake_tcp
   UPX_VERSION: "5.2.0"
 
 jobs:
@@ -19,23 +19,20 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ------------------------------------------------------------
+      # ============================================================
       # Checkout this repository
-      # Required so gh/release operations have a valid git repository.
-      # ------------------------------------------------------------
+      # ============================================================
       - name: Checkout workflow repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      # ------------------------------------------------------------
-      # Get the actual latest stable Mihomo release.
+      # ============================================================
+      # Get latest stable Mihomo release
       #
       # IMPORTANT:
-      # Do NOT use /releases and assume the first page contains the
-      # latest release. /releases/latest directly returns the latest
-      # non-draft, non-prerelease GitHub release.
-      # ------------------------------------------------------------
+      # Use /releases/latest instead of the paginated /releases API.
+      # ============================================================
       - name: Get latest Mihomo stable release
         id: mihomo
         shell: bash
@@ -56,11 +53,12 @@ jobs:
           fi
 
           echo "Latest stable Mihomo release: ${VERSION}"
+
           echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
 
-      # ------------------------------------------------------------
-      # Clone official Mihomo source at the exact stable release tag.
-      # ------------------------------------------------------------
+      # ============================================================
+      # Checkout official Mihomo source
+      # ============================================================
       - name: Checkout official Mihomo source
         shell: bash
         run: |
@@ -68,7 +66,8 @@ jobs:
 
           VERSION="${{ steps.mihomo.outputs.version }}"
 
-          echo "Cloning Mihomo ${VERSION}..."
+          echo "Cloning official Mihomo ${VERSION}..."
+
           git clone \
             --depth 1 \
             --branch "${VERSION}" \
@@ -77,13 +76,17 @@ jobs:
 
           cd mihomo
 
-          echo "Mihomo source:"
-          git describe --tags --always --dirty
+          echo
+          echo "========================================"
+          echo "Mihomo source"
+          echo "========================================"
+
+          git describe --tags --always
           git rev-parse HEAD
 
-      # ------------------------------------------------------------
-      # Setup Go according to the current GitHub Actions environment.
-      # ------------------------------------------------------------
+      # ============================================================
+      # Setup Go
+      # ============================================================
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
@@ -92,32 +95,38 @@ jobs:
           cache: true
           cache-dependency-path: mihomo/go.sum
 
-      # ------------------------------------------------------------
+      # ============================================================
       # Install UPX
-      # ------------------------------------------------------------
+      # ============================================================
       - name: Install UPX
         shell: bash
         run: |
           set -euo pipefail
 
-          UPX_VERSION="${UPX_VERSION}"
           ARCHIVE="upx-${UPX_VERSION}-amd64_linux.tar.xz"
 
           curl -fL \
             -o "/tmp/${ARCHIVE}" \
             "https://github.com/upx/upx/releases/download/v${UPX_VERSION}/${ARCHIVE}"
 
-          tar -xJf "/tmp/${ARCHIVE}" -C /tmp
+          tar -xJf \
+            "/tmp/${ARCHIVE}" \
+            -C /tmp
 
           install \
             "/tmp/upx-${UPX_VERSION}-amd64_linux/upx" \
             /usr/local/bin/upx
 
+          echo
+          echo "========================================"
+          echo "UPX version"
+          echo "========================================"
+
           upx --version
 
-      # ------------------------------------------------------------
+      # ============================================================
       # Show build configuration
-      # ------------------------------------------------------------
+      # ============================================================
       - name: Show build configuration
         shell: bash
         run: |
@@ -126,18 +135,29 @@ jobs:
           echo "========================================"
           echo "Mihomo Lite build configuration"
           echo "========================================"
+
           echo "Mihomo version : ${{ steps.mihomo.outputs.version }}"
           echo "Build tags     : ${BUILD_TAGS}"
           echo "UPX version    : ${UPX_VERSION}"
           echo "Targets        : linux-arm64, linux-armv7"
           echo "CGO            : disabled"
+          echo
+          echo "Disabled optional components:"
+          echo "  - Tailscale"
+          echo "  - ZeroTier"
+          echo "  - EasyTier"
+          echo "  - Fake-TCP"
+          echo "  - gVisor"
+          echo
+          echo "Low-memory build tag:"
+          echo "  - NOT enabled"
           echo "========================================"
 
           go version
 
-      # ------------------------------------------------------------
+      # ============================================================
       # Build Linux ARM64
-      # ------------------------------------------------------------
+      # ============================================================
       - name: Build Linux ARM64
         working-directory: mihomo
         shell: bash
@@ -145,13 +165,12 @@ jobs:
           GOOS: linux
           GOARCH: arm64
           CGO_ENABLED: "0"
-          VERSION: ${{ steps.mihomo.outputs.version }}
         run: |
           set -euo pipefail
 
           OUTPUT="../mihomo-linux-arm64"
 
-          echo "Building Mihomo ${VERSION} for Linux ARM64..."
+          echo "Building Mihomo ${{ steps.mihomo.outputs.version }} for Linux ARM64..."
 
           go build \
             -trimpath \
@@ -162,11 +181,9 @@ jobs:
 
           chmod +x "${OUTPUT}"
 
-          echo "ARM64 build completed."
-
-      # ------------------------------------------------------------
+      # ============================================================
       # Build Linux ARMv7
-      # ------------------------------------------------------------
+      # ============================================================
       - name: Build Linux ARMv7
         working-directory: mihomo
         shell: bash
@@ -175,13 +192,12 @@ jobs:
           GOARCH: arm
           GOARM: "7"
           CGO_ENABLED: "0"
-          VERSION: ${{ steps.mihomo.outputs.version }}
         run: |
           set -euo pipefail
 
           OUTPUT="../mihomo-linux-armv7"
 
-          echo "Building Mihomo ${VERSION} for Linux ARMv7..."
+          echo "Building Mihomo ${{ steps.mihomo.outputs.version }} for Linux ARMv7..."
 
           go build \
             -trimpath \
@@ -192,11 +208,13 @@ jobs:
 
           chmod +x "${OUTPUT}"
 
-          echo "ARMv7 build completed."
-
-      # ------------------------------------------------------------
-      # Verify architecture and build information BEFORE UPX.
-      # ------------------------------------------------------------
+      # ============================================================
+      # Verify architecture
+      #
+      # DO NOT execute the binaries here.
+      # GitHub runner = x86_64
+      # Built binaries = ARM64 / ARMv7
+      # ============================================================
       - name: Verify builds before UPX
         shell: bash
         run: |
@@ -211,70 +229,38 @@ jobs:
 
           echo
           echo "========================================"
-          echo "Mihomo ARM64 version"
+          echo "Binary size"
           echo "========================================"
 
-          ./mihomo-linux-arm64 -v
-
-          echo
-          echo "========================================"
-          echo "Mihomo ARMv7 version"
-          echo "========================================"
-
-          ./mihomo-linux-armv7 -v
+          ls -lh \
+            mihomo-linux-arm64 \
+            mihomo-linux-armv7
 
           echo
           echo "========================================"
-          echo "Expected version"
+          echo "Expected Mihomo version"
           echo "========================================"
 
           echo "${{ steps.mihomo.outputs.version }}"
 
-      # ------------------------------------------------------------
-      # Verify that the binary really contains the expected version.
+          echo
+          echo "========================================"
+          echo "Build tags"
+          echo "========================================"
+
+          echo "${BUILD_TAGS}"
+
+          echo
+          echo "ARM binaries built successfully."
+          echo "Execution test is intentionally skipped because"
+          echo "the GitHub runner is x86_64."
+
+      # ============================================================
+      # UPX compression
       #
-      # This prevents the previous 1.10.0 problem from silently
-      # producing a release with the wrong Mihomo version.
-      # ------------------------------------------------------------
-      - name: Verify Mihomo version
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          EXPECTED="${{ steps.mihomo.outputs.version }}"
-
-          ARM64_VERSION="$(
-            ./mihomo-linux-arm64 -v |
-            awk 'NR==1 {print $3}'
-          )"
-
-          ARMV7_VERSION="$(
-            ./mihomo-linux-armv7 -v |
-            awk 'NR==1 {print $3}'
-          )"
-
-          echo "Expected : ${EXPECTED}"
-          echo "ARM64    : ${ARM64_VERSION}"
-          echo "ARMv7    : ${ARMV7_VERSION}"
-
-          if [ "${ARM64_VERSION}" != "${EXPECTED}" ]; then
-            echo "ERROR: ARM64 Mihomo version mismatch!"
-            exit 1
-          fi
-
-          if [ "${ARMV7_VERSION}" != "${EXPECTED}" ]; then
-            echo "ERROR: ARMv7 Mihomo version mismatch!"
-            exit 1
-          fi
-
-          echo "Mihomo version verification passed."
-
-      # ------------------------------------------------------------
-      # UPX maximum compression.
-      #
-      # No .upx suffix is added.
-      # Compression is performed in-place.
-      # ------------------------------------------------------------
+      # In-place compression.
+      # No .upx suffix.
+      # ============================================================
       - name: Compress with UPX
         shell: bash
         run: |
@@ -293,8 +279,11 @@ jobs:
           echo "UPX compression"
           echo "========================================"
 
-          upx --best --lzma mihomo-linux-arm64
-          upx --best --lzma mihomo-linux-armv7
+          upx --best --lzma \
+            mihomo-linux-arm64
+
+          upx --best --lzma \
+            mihomo-linux-armv7
 
           echo
           echo "========================================"
@@ -305,60 +294,51 @@ jobs:
             mihomo-linux-arm64 \
             mihomo-linux-armv7
 
-      # ------------------------------------------------------------
-      # Test UPX integrity.
-      # ------------------------------------------------------------
+      # ============================================================
+      # Test UPX integrity
+      # ============================================================
       - name: Test UPX binaries
         shell: bash
         run: |
           set -euo pipefail
 
+          echo "Testing ARM64..."
           upx -t mihomo-linux-arm64
+
+          echo
+          echo "Testing ARMv7..."
           upx -t mihomo-linux-armv7
 
-      # ------------------------------------------------------------
-      # Verify the compressed binaries still execute and report
-      # the correct Mihomo version.
-      # ------------------------------------------------------------
+          echo
+          echo "UPX integrity tests passed."
+
+      # ============================================================
+      # Verify compressed architecture
+      # ============================================================
       - name: Verify compressed binaries
         shell: bash
         run: |
           set -euo pipefail
 
-          EXPECTED="${{ steps.mihomo.outputs.version }}"
+          echo "========================================"
+          echo "Compressed binary architecture"
+          echo "========================================"
 
-          echo "ARM64:"
-          ./mihomo-linux-arm64 -v
+          file mihomo-linux-arm64
+          file mihomo-linux-armv7
 
           echo
-          echo "ARMv7:"
-          ./mihomo-linux-armv7 -v
+          echo "========================================"
+          echo "Compressed binary size"
+          echo "========================================"
 
-          ARM64_VERSION="$(
-            ./mihomo-linux-arm64 -v |
-            awk 'NR==1 {print $3}'
-          )"
+          ls -lh \
+            mihomo-linux-arm64 \
+            mihomo-linux-armv7
 
-          ARMV7_VERSION="$(
-            ./mihomo-linux-armv7 -v |
-            awk 'NR==1 {print $3}'
-          )"
-
-          if [ "${ARM64_VERSION}" != "${EXPECTED}" ]; then
-            echo "ERROR: Compressed ARM64 binary version mismatch!"
-            exit 1
-          fi
-
-          if [ "${ARMV7_VERSION}" != "${EXPECTED}" ]; then
-            echo "ERROR: Compressed ARMv7 binary version mismatch!"
-            exit 1
-          fi
-
-          echo "Compressed binaries verified successfully."
-
-      # ------------------------------------------------------------
-      # SHA256
-      # ------------------------------------------------------------
+      # ============================================================
+      # Generate SHA256
+      # ============================================================
       - name: Generate SHA256SUMS
         shell: bash
         run: |
@@ -369,13 +349,17 @@ jobs:
             mihomo-linux-armv7 \
             > SHA256SUMS
 
+          echo "========================================"
+          echo "SHA256"
+          echo "========================================"
+
           cat SHA256SUMS
 
-      # ------------------------------------------------------------
-      # Rename release assets.
+      # ============================================================
+      # Prepare release assets
       #
       # No .upx suffix.
-      # ------------------------------------------------------------
+      # ============================================================
       - name: Prepare release assets
         shell: bash
         run: |
@@ -397,15 +381,19 @@ jobs:
           echo "ARM64_ASSET=${ARM64_ASSET}" >> "${GITHUB_ENV}"
           echo "ARMV7_ASSET=${ARMV7_ASSET}" >> "${GITHUB_ENV}"
 
-          echo "Prepared:"
+          echo
+          echo "========================================"
+          echo "Release assets"
+          echo "========================================"
+
           ls -lh \
             "${ARM64_ASSET}" \
             "${ARMV7_ASSET}" \
             SHA256SUMS
 
-      # ------------------------------------------------------------
-      # Release notes
-      # ------------------------------------------------------------
+      # ============================================================
+      # Generate release notes
+      # ============================================================
       - name: Generate release notes
         shell: bash
         run: |
@@ -424,17 +412,14 @@ jobs:
           ${BUILD_TAGS}
           \`\`\`
 
-          ### Enabled
+          ## Disabled components
 
+          - Tailscale
+          - ZeroTier
+          - EasyTier
+          - Fake-TCP
+          - gVisor
           - with_low_memory
-
-          ### Disabled
-
-          - no_tailscale
-          - no_zerotier
-          - no_easytier
-          - no_fake_tcp
-          - with_gvisor not enabled
 
           ## Targets
 
@@ -457,12 +442,11 @@ jobs:
 
           cat RELEASE_NOTES.md
 
-      # ------------------------------------------------------------
-      # Create version-specific release.
+      # ============================================================
+      # Create version-specific release
       #
-      # IMPORTANT:
       # Existing releases are NEVER deleted.
-      # ------------------------------------------------------------
+      # ============================================================
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -483,7 +467,7 @@ jobs:
             >/dev/null 2>&1; then
 
             echo "Release ${RELEASE_TAG} already exists."
-            echo "It will NOT be deleted or recreated."
+            echo "Existing release will NOT be deleted."
 
           else
 
@@ -497,12 +481,14 @@ jobs:
 
           fi
 
-      # ------------------------------------------------------------
-      # Upload assets.
+      # ============================================================
+      # Upload release assets
       #
-      # --clobber only replaces assets with the SAME filename inside
-      # the SAME release. It does NOT delete old releases.
-      # ------------------------------------------------------------
+      # --clobber:
+      #   Replace same-named assets in the same release.
+      #
+      # It does NOT delete previous releases.
+      # ============================================================
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -522,9 +508,9 @@ jobs:
             SHA256SUMS \
             --clobber
 
-      # ------------------------------------------------------------
+      # ============================================================
       # Final summary
-      # ------------------------------------------------------------
+      # ============================================================
       - name: Build summary
         shell: bash
         run: |
@@ -536,18 +522,29 @@ jobs:
           echo "========================================"
           echo "Mihomo Lite build completed"
           echo "========================================"
+
           echo "Version : ${VERSION}"
           echo "Release : ${RELEASE_TAG}"
+
           echo
           echo "Targets:"
           echo "  - Linux ARM64"
           echo "  - Linux ARMv7"
+
           echo
-          echo "Tags:"
+          echo "Build tags:"
           echo "  ${BUILD_TAGS}"
+
           echo
           echo "UPX:"
           echo "  ${UPX_VERSION} --best --lzma"
+
           echo
-          echo "Old releases were NOT deleted."
+          echo "with_low_memory:"
+          echo "  DISABLED"
+
+          echo
+          echo "Old releases:"
+          echo "  NOT deleted"
+
           echo "========================================"
