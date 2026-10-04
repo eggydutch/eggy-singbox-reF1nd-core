@@ -1,22 +1,41 @@
-name: Mihomo Lite UPX Build
+name: Mihomo Lite UPX
 
 on:
   workflow_dispatch:
 
   schedule:
     # Every day at 03:00 UTC
+    # = 11:00 Beijing/Singapore/Hong Kong time
     - cron: "0 3 * * *"
 
 permissions:
   contents: write
+
+env:
+  # ============================================================
+  # Mihomo Lite build configuration
+  # ============================================================
+
+  BUILD_TAGS: no_tailscale,no_zerotier,no_easytier,no_fake_tcp,with_low_memory
+
+  # Only OpenWrt-relevant architectures
+  ARM64_OUTPUT: mihomo-linux-arm64
+  ARMV7_OUTPUT: mihomo-linux-armv7
+
+  # Official Mihomo repository
+  MIHOMO_REPO: https://github.com/MetaCubeX/mihomo.git
+
+  # UPX
+  UPX_VERSION: "5.2.0"
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
+
       # ============================================================
-      # 1. Get latest stable Mihomo version
+      # 1. Find latest stable Mihomo release
       # ============================================================
       - name: Get latest stable Mihomo release
         id: mihomo
@@ -29,10 +48,15 @@ jobs:
           echo "Finding latest stable Mihomo release"
           echo "========================================"
 
-          RELEASE=$(curl -fsSL \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/MetaCubeX/mihomo/releases" |
+          RELEASE_JSON="$(
+            curl -fsSL \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/MetaCubeX/mihomo/releases"
+          )"
+
+          VERSION="$(
+            echo "${RELEASE_JSON}" |
             jq -r '
               map(
                 select(
@@ -42,20 +66,18 @@ jobs:
               )
               | sort_by(.published_at)
               | last
-            ')
+              | .tag_name
+            '
+          )"
 
-          VERSION=$(echo "$RELEASE" | jq -r '.tag_name')
-
-          if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
-            echo "ERROR: Failed to determine Mihomo version"
+          if [ -z "${VERSION}" ] || [ "${VERSION}" = "null" ]; then
+            echo "ERROR: Failed to determine latest stable Mihomo version"
             exit 1
           fi
 
           echo "Latest stable Mihomo: ${VERSION}"
 
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-
-          echo "$RELEASE" > release.json
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
 
       # ============================================================
       # 2. Checkout official Mihomo source
@@ -68,18 +90,21 @@ jobs:
 
           echo "========================================"
           echo "Cloning official MetaCubeX/mihomo"
-          echo "Version: ${VERSION}"
           echo "========================================"
+
+          echo "Repository: ${MIHOMO_REPO}"
+          echo "Version:    ${VERSION}"
 
           git clone \
             --depth 1 \
             --branch "${VERSION}" \
-            https://github.com/MetaCubeX/mihomo.git \
+            "${MIHOMO_REPO}" \
             mihomo
 
           cd mihomo
 
-          echo "Source:"
+          echo
+          echo "Remote:"
           git remote -v
 
           echo
@@ -87,7 +112,7 @@ jobs:
           git rev-parse HEAD
 
           echo
-          echo "Git tag:"
+          echo "Tag:"
           git describe --tags --always
 
       # ============================================================
@@ -98,16 +123,19 @@ jobs:
         with:
           go-version: stable
           check-latest: true
+          cache: true
           cache-dependency-path: mihomo/go.sum
 
       # ============================================================
       # 4. Install UPX
       # ============================================================
-      - name: Install UPX 5.2.0
+      - name: Install UPX
         run: |
           set -euo pipefail
 
-          UPX_VERSION="5.2.0"
+          echo "========================================"
+          echo "Installing UPX ${UPX_VERSION}"
+          echo "========================================"
 
           wget -q \
             "https://github.com/upx/upx/releases/download/v${UPX_VERSION}/upx-${UPX_VERSION}-amd64_linux.tar.xz"
@@ -115,38 +143,51 @@ jobs:
           tar -xf \
             "upx-${UPX_VERSION}-amd64_linux.tar.xz"
 
-          sudo install -m 755 \
+          sudo install \
+            -m 755 \
             "upx-${UPX_VERSION}-amd64_linux/upx" \
             /usr/local/bin/upx
 
+          echo
           upx --version
 
       # ============================================================
-      # 5. Define build metadata
+      # 5. Show build configuration
       # ============================================================
-      - name: Define build metadata
+      - name: Show build configuration
         env:
           VERSION: ${{ steps.mihomo.outputs.version }}
         run: |
           set -euo pipefail
 
-          BUILD_TAGS="no_tailscale,no_zerotier,no_easytier,no_fake_tcp,with_low_memory"
-
-          echo "BUILD_TAGS=${BUILD_TAGS}" >> "$GITHUB_ENV"
-
-          echo "ARM64_OUTPUT=mihomo-linux-arm64-${VERSION}" >> "$GITHUB_ENV"
-          echo "ARMV7_OUTPUT=mihomo-linux-armv7-${VERSION}" >> "$GITHUB_ENV"
-
-          echo "RELEASE_TAG=mihomo-lite-${VERSION}" >> "$GITHUB_ENV"
-
           echo "========================================"
-          echo "Mihomo Lite Build"
-          echo "Version: ${VERSION}"
-          echo "Build tags: ${BUILD_TAGS}"
+          echo "Mihomo Lite Build Configuration"
+          echo "========================================"
+
+          echo "Version:"
+          echo "  ${VERSION}"
+
+          echo
+          echo "Build tags:"
+          echo "  ${BUILD_TAGS}"
+
+          echo
           echo "Targets:"
           echo "  linux/arm64"
           echo "  linux/armv7"
-          echo "========================================"
+
+          echo
+          echo "CGO:"
+          echo "  disabled"
+
+          echo
+          echo "gVisor:"
+          echo "  disabled"
+
+          echo
+          echo "UPX:"
+          echo "  ${UPX_VERSION}"
+          echo "  --best --lzma"
 
       # ============================================================
       # 6. Build Linux ARM64
@@ -154,17 +195,32 @@ jobs:
       - name: Build Mihomo Linux ARM64
         working-directory: mihomo
         env:
+          VERSION: ${{ steps.mihomo.outputs.version }}
           GOOS: linux
           GOARCH: arm64
           CGO_ENABLED: "0"
         run: |
           set -euo pipefail
 
+          OUTPUT="../${ARM64_OUTPUT}"
+
+          echo "========================================"
+          echo "Building Linux ARM64"
+          echo "========================================"
+
           go build \
             -trimpath \
             -tags="${BUILD_TAGS}" \
-            -ldflags="-s -w -buildid= -X github.com/metacubex/mihomo/constant.Version=${VERSION}" \
-            -o "../${ARM64_OUTPUT}"
+            -ldflags="-s -w -buildid=" \
+            -o "${OUTPUT}" \
+            .
+
+          chmod +x "${OUTPUT}"
+
+          echo
+          echo "Build completed:"
+          file "${OUTPUT}"
+          ls -lh "${OUTPUT}"
 
       # ============================================================
       # 7. Build Linux ARMv7
@@ -172,6 +228,7 @@ jobs:
       - name: Build Mihomo Linux ARMv7
         working-directory: mihomo
         env:
+          VERSION: ${{ steps.mihomo.outputs.version }}
           GOOS: linux
           GOARCH: arm
           GOARM: "7"
@@ -179,42 +236,53 @@ jobs:
         run: |
           set -euo pipefail
 
+          OUTPUT="../${ARMV7_OUTPUT}"
+
+          echo "========================================"
+          echo "Building Linux ARMv7"
+          echo "========================================"
+
           go build \
             -trimpath \
             -tags="${BUILD_TAGS}" \
-            -ldflags="-s -w -buildid= -X github.com/metacubex/mihomo/constant.Version=${VERSION}" \
-            -o "../${ARMV7_OUTPUT}"
+            -ldflags="-s -w -buildid=" \
+            -o "${OUTPUT}" \
+            .
+
+          chmod +x "${OUTPUT}"
+
+          echo
+          echo "Build completed:"
+          file "${OUTPUT}"
+          ls -lh "${OUTPUT}"
 
       # ============================================================
-      # 8. Verify uncompressed binaries
+      # 8. Check binaries before UPX
       # ============================================================
-      - name: Verify binaries
-        env:
-          VERSION: ${{ steps.mihomo.outputs.version }}
+      - name: Verify uncompressed binaries
         run: |
           set -euo pipefail
 
           echo "========================================"
-          echo "Uncompressed binaries"
+          echo "Verifying uncompressed binaries"
           echo "========================================"
 
-          file \
-            "${ARM64_OUTPUT}" \
-            "${ARMV7_OUTPUT}"
-
-          ls -lh \
-            "${ARM64_OUTPUT}" \
-            "${ARMV7_OUTPUT}"
-
-          chmod +x \
-            "${ARM64_OUTPUT}" \
-            "${ARMV7_OUTPUT}"
+          echo
+          echo "ARM64:"
+          file "${ARM64_OUTPUT}"
+          ls -lh "${ARM64_OUTPUT}"
 
           echo
-          echo "Checking version..."
+          echo "ARMv7:"
+          file "${ARMV7_OUTPUT}"
+          ls -lh "${ARMV7_OUTPUT}"
 
-          "./${ARM64_OUTPUT}" -v || true
-          "./${ARMV7_OUTPUT}" -v || true
+          echo
+          echo "Checking ELF architecture..."
+
+          file "${ARM64_OUTPUT}" | grep -E "ARM aarch64|ARM64|aarch64"
+
+          file "${ARMV7_OUTPUT}" | grep -E "ARM, EABI5|ARM"
 
       # ============================================================
       # 9. UPX extreme compression
@@ -227,18 +295,28 @@ jobs:
           echo "UPX compression"
           echo "========================================"
 
-          upx \
-            --best \
-            --lzma \
-            "${ARMV7_OUTPUT}"
-
+          echo
+          echo "ARM64:"
           upx \
             --best \
             --lzma \
             "${ARM64_OUTPUT}"
 
+          echo
+          echo "ARMv7:"
+          upx \
+            --best \
+            --lzma \
+            "${ARMV7_OUTPUT}"
+
+          echo
+          echo "Compressed binaries:"
+          ls -lh \
+            "${ARM64_OUTPUT}" \
+            "${ARMV7_OUTPUT}"
+
       # ============================================================
-      # 10. UPX integrity test
+      # 10. Test UPX integrity
       # ============================================================
       - name: Test UPX binaries
         run: |
@@ -248,14 +326,8 @@ jobs:
           echo "UPX integrity test"
           echo "========================================"
 
-          upx -t "${ARMV7_OUTPUT}"
           upx -t "${ARM64_OUTPUT}"
-
-          echo
-          echo "Compressed binaries:"
-          ls -lh \
-            "${ARMV7_OUTPUT}" \
-            "${ARM64_OUTPUT}"
+          upx -t "${ARMV7_OUTPUT}"
 
       # ============================================================
       # 11. Generate SHA256
@@ -264,59 +336,94 @@ jobs:
         run: |
           set -euo pipefail
 
+          echo "========================================"
+          echo "Generating SHA256"
+          echo "========================================"
+
           sha256sum \
-            "${ARMV7_OUTPUT}" \
             "${ARM64_OUTPUT}" \
+            "${ARMV7_OUTPUT}" \
             > SHA256SUMS
 
           cat SHA256SUMS
 
       # ============================================================
-      # 12. Prepare release notes
+      # 12. Prepare release names / notes
       # ============================================================
-      - name: Prepare release notes
+      - name: Prepare release
         env:
           VERSION: ${{ steps.mihomo.outputs.version }}
         run: |
           set -euo pipefail
 
+          RELEASE_TAG="mihomo-lite-${VERSION}"
+
+          ARM64_ASSET="mihomo-linux-arm64-${VERSION}"
+          ARMV7_ASSET="mihomo-linux-armv7-${VERSION}"
+
+          mv "${ARM64_OUTPUT}" "${ARM64_ASSET}"
+          mv "${ARMV7_OUTPUT}" "${ARMV7_ASSET}"
+
+          echo "RELEASE_TAG=${RELEASE_TAG}" >> "${GITHUB_ENV}"
+
           cat > RELEASE_NOTES.md <<EOF
           # Mihomo Lite ${VERSION}
 
-          Source:
+          Official source:
           https://github.com/MetaCubeX/mihomo
 
-          Version: ${VERSION}
+          ## Build configuration
 
           Build tags:
+
           \`${BUILD_TAGS}\`
 
-          gVisor:
-          Disabled
+          Disabled features:
 
-          Platforms:
+          - Tailscale
+          - ZeroTier
+          - EasyTier
+          - Fake-TCP
+          - gVisor
+
+          Enabled:
+
+          - low-memory relay buffer
+
+          ## Platforms
+
           - Linux ARM64
-          - Linux ARMv7
+          - Linux ARMv7 / ARMv7 hard-float
 
-          Build:
-          - CGO disabled
-          - trimpath
-          - stripped symbols
+          ## Build options
+
+          - CGO_ENABLED=0
+          - -trimpath
+          - -s -w
+          - UPX ${UPX_VERSION}
           - UPX --best --lzma
 
-          Designed for:
-          - OpenWrt
-          - ImmortalWrt
-          - ARM64 routers
-          - ARMv7 routers
+          ## Files
 
-          This binary is compiled directly from the official MetaCubeX/mihomo source code.
+          - mihomo-linux-arm64-${VERSION}
+          - mihomo-linux-armv7-${VERSION}
+          - SHA256SUMS
+
+          Built directly from the official MetaCubeX/mihomo source.
           EOF
 
+          echo "========================================"
+          echo "Release"
+          echo "========================================"
+
+          echo "Tag:"
+          echo "${RELEASE_TAG}"
+
+          echo
           cat RELEASE_NOTES.md
 
       # ============================================================
-      # 13. Create / update version-specific GitHub Release
+      # 13. Create version-specific GitHub Release
       # ============================================================
       - name: Create GitHub Release
         env:
@@ -326,49 +433,86 @@ jobs:
           set -euo pipefail
 
           echo "========================================"
-          echo "GitHub Release"
+          echo "Creating GitHub Release"
           echo "========================================"
 
           if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
-            echo "Release ${RELEASE_TAG} already exists."
-            echo "Uploading/updating only the current version assets."
+            echo "Release already exists:"
+            echo "${RELEASE_TAG}"
+            echo
+            echo "No existing releases will be deleted."
+            echo "Only matching assets will be replaced if necessary."
           else
-            echo "Creating release ${RELEASE_TAG}"
+            echo "Creating new release:"
+            echo "${RELEASE_TAG}"
 
             gh release create "${RELEASE_TAG}" \
               --title "Mihomo Lite ${VERSION}" \
-              --notes-file RELEASE_NOTES.md \
-              --latest
+              --notes-file RELEASE_NOTES.md
           fi
 
-          gh release upload "${RELEASE_TAG}" \
-            "${ARMV7_OUTPUT}" \
-            "${ARM64_OUTPUT}" \
+      # ============================================================
+      # 14. Upload assets
+      #
+      # --clobber only replaces assets with the SAME filename
+      # in the SAME version release.
+      #
+      # It does NOT delete old releases.
+      # ============================================================
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.mihomo.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          ARM64_ASSET="mihomo-linux-arm64-${VERSION}"
+          ARMV7_ASSET="mihomo-linux-armv7-${VERSION}"
+
+          echo "========================================"
+          echo "Uploading release assets"
+          echo "========================================"
+
+          gh release upload \
+            "${RELEASE_TAG}" \
+            "${ARM64_ASSET}" \
+            "${ARMV7_ASSET}" \
             SHA256SUMS \
             --clobber
 
       # ============================================================
-      # 14. Final summary
+      # 15. Final summary
       # ============================================================
       - name: Build summary
         env:
           VERSION: ${{ steps.mihomo.outputs.version }}
         run: |
+          set -euo pipefail
+
+          echo
           echo "========================================"
           echo "Mihomo Lite build completed"
           echo "========================================"
+
           echo
           echo "Version:"
-          echo "${VERSION}"
+          echo "  ${VERSION}"
+
           echo
           echo "Build tags:"
-          echo "${BUILD_TAGS}"
+          echo "  ${BUILD_TAGS}"
+
           echo
           echo "Artifacts:"
           ls -lh \
-            "${ARMV7_OUTPUT}" \
-            "${ARM64_OUTPUT}" \
+            "mihomo-linux-arm64-${VERSION}" \
+            "mihomo-linux-armv7-${VERSION}" \
             SHA256SUMS
+
           echo
           echo "Release:"
-          echo "${RELEASE_TAG}"
+          echo "  ${RELEASE_TAG}"
+
+          echo
+          echo "Old releases were NOT deleted."
+```
