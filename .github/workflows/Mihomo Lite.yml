@@ -515,4 +515,3 @@ jobs:
 
           echo
           echo "Old releases were NOT deleted."
-```
