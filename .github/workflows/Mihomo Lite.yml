@@ -45,12 +45,17 @@ jobs:
       - name: 設定 Go 環境
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: 'stable' # 亦可設為 '1.24' 或 'stable'
 
-      - name: 安裝 UPX 壓縮工具
+      - name: 安裝最新版 UPX 壓縮工具
         run: |
-          sudo apt-get update
-          sudo apt-get install -y upx
+          UPX_TAG=$(curl -s https://api.github.com/repos/upx/upx/releases/latest | jq -r .tag_name)
+          UPX_VER=${UPX_TAG#v}
+          curl -L -o upx.tar.xz "https://github.com/upx/upx/releases/download/${UPX_TAG}/upx-${UPX_VER}-amd64_linux.tar.xz"
+          tar -xf upx.tar.xz
+          sudo mv "upx-${UPX_VER}-amd64_linux/upx" /usr/local/bin/
+          rm -rf upx*
+          upx --version
 
       - name: 編譯 Mihomo Lite 核心
         env:
@@ -116,7 +121,7 @@ jobs:
             - **源碼版本**: `${{ steps.tag.outputs.VERSION_TAG }}`
             - **Build Tags**: `no_tailscale,no_zerotier,no_easytier,no_fake_tcp` (已排除 `with_gvisor`)
             - **支援架構**: `linux-arm64`, `linux-armv7`
-            - **壓縮方式**: UPX 極限壓縮
+            - **壓縮方式**: 最新版 UPX (`--ultra --best`)
           files: ./dist/*
           draft: false
           prerelease: false
