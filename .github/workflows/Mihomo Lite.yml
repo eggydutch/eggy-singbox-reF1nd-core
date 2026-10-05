@@ -1,0 +1,124 @@
+name: Build Mihomo Lite Core
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Mihomo 源碼 Tag (例如 v1.19.2，留空則自動獲取官方最新 Release)'
+        required: false
+        default: ''
+  schedule:
+    - cron: '0 0 * * 0' # 每週日自動檢查並編譯最新版
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goarch: arm64
+            goarm: ""
+            name: linux-arm64
+          - goarch: arm
+            goarm: "7"
+            name: linux-armv7
+
+    steps:
+      - name: 獲取 Mihomo 最新 Tag
+        id: get_tag
+        run: |
+          if [ -z "${{ github.event.inputs.tag_name }}" ]; then
+            TAG=$(curl -s https://api.github.com/repos/metacubex/mihomo/releases/latest | jq -r .tag_name)
+          else
+            TAG="${{ github.event.inputs.tag_name }}"
+          fi
+          echo "TAG=$TAG" >> $GITHUB_OUTPUT
+          echo "編譯版本Tag: $TAG"
+
+      - name: 拉取 Mihomo 官方源碼
+        uses: actions/checkout@v4
+        with:
+          repository: metacubex/mihomo
+          ref: ${{ steps.get_tag.outputs.TAG }}
+
+      - name: 設定 Go 環境
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: 安裝 UPX 壓縮工具
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y upx
+
+      - name: 編譯 Mihomo Lite 核心
+        env:
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+          CGO_ENABLED: 0
+        run: |
+          BUILD_TIME=$(date -u '+%Y-%m-%d-%H%M')
+          VERSION="${{ steps.get_tag.outputs.TAG }}"
+          
+          # 定義精簡 Build Tags（不包含 with_gvisor）
+          TAGS="no_tailscale,no_zerotier,no_easytier,no_fake_tcp"
+          
+          OUT_NAME="mihomo-${{ matrix.name }}"
+          
+          go build -v -trimpath \
+            -tags "$TAGS" \
+            -ldflags "-s -w -buildid= \
+              -X 'github.com/metacubex/mihomo/constant.Version=${VERSION}' \
+              -X 'github.com/metacubex/mihomo/constant.BuildTime=${BUILD_TIME}'" \
+            -o "$OUT_NAME" .
+
+      - name: UPX 極限壓縮 (不保留 .upx 後綴)
+        run: |
+          OUT_NAME="mihomo-${{ matrix.name }}"
+          upx --ultra --best "$OUT_NAME"
+
+      - name: 上傳 Artifact 暫存檔
+        uses: actions/upload-artifact@v4
+        with:
+          name: mihomo-${{ matrix.name }}
+          path: mihomo-${{ matrix.name }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: 下載所有架構編譯檔
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: ./dist
+
+      - name: 獲取發布版本 Tag
+        id: tag
+        run: |
+          if [ -n "${{ github.event.inputs.tag_name }}" ]; then
+            TAG="${{ github.event.inputs.tag_name }}"
+          else
+            TAG=$(curl -s https://api.github.com/repos/metacubex/mihomo/releases/latest | jq -r .tag_name)
+          fi
+          echo "RELEASE_TAG=${TAG}-lite" >> $GITHUB_OUTPUT
+          echo "VERSION_TAG=${TAG}" >> $GITHUB_OUTPUT
+
+      - name: 發布 GitHub Release (保留舊版本)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.RELEASE_TAG }}
+          name: Mihomo Lite Core (${{ steps.tag.outputs.VERSION_TAG }})
+          body: |
+            ## Mihomo Lite 核心編譯資訊
+            - **源碼版本**: `${{ steps.tag.outputs.VERSION_TAG }}`
+            - **Build Tags**: `no_tailscale,no_zerotier,no_easytier,no_fake_tcp` (已排除 `with_gvisor`)
+            - **支援架構**: `linux-arm64`, `linux-armv7`
+            - **壓縮方式**: UPX 極限壓縮
+          files: ./dist/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
