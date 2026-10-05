@@ -47,14 +47,19 @@ jobs:
         with:
           go-version: 'stable' # 亦可設為 '1.24' 或 'stable'
 
-      - name: 安裝最新版 UPX 壓縮工具
+      - name: 安裝最新 UPX 5.x 壓縮工具
         run: |
+          # 自動從 GitHub Release 抓取 UPX 最新 5.x 版本的 Tag
           UPX_TAG=$(curl -s https://api.github.com/repos/upx/upx/releases/latest | jq -r .tag_name)
           UPX_VER=${UPX_TAG#v}
+          echo "正在下載 UPX 最新版本: ${UPX_TAG}"
+          
           curl -L -o upx.tar.xz "https://github.com/upx/upx/releases/download/${UPX_TAG}/upx-${UPX_VER}-amd64_linux.tar.xz"
           tar -xf upx.tar.xz
           sudo mv "upx-${UPX_VER}-amd64_linux/upx" /usr/local/bin/
           rm -rf upx*
+          
+          # 驗證 UPX 版本
           upx --version
 
       - name: 編譯 Mihomo Lite 核心
@@ -67,7 +72,7 @@ jobs:
           BUILD_TIME=$(date -u '+%Y-%m-%d-%H%M')
           VERSION="${{ steps.get_tag.outputs.TAG }}"
           
-          # 定義精簡 Build Tags（不包含 with_gvisor）
+          # 定義精簡 Build Tags（無 with_gvisor）
           TAGS="no_tailscale,no_zerotier,no_easytier,no_fake_tcp"
           
           OUT_NAME="mihomo-${{ matrix.name }}"
@@ -79,10 +84,10 @@ jobs:
               -X 'github.com/metacubex/mihomo/constant.BuildTime=${BUILD_TIME}'" \
             -o "$OUT_NAME" .
 
-      - name: UPX 極限壓縮 (不保留 .upx 後綴)
+      - name: UPX 5.x LZMA 極限壓縮 (無 .upx 後綴)
         run: |
           OUT_NAME="mihomo-${{ matrix.name }}"
-          upx --ultra --best "$OUT_NAME"
+          upx --best --lzma "$OUT_NAME"
 
       - name: 上傳 Artifact 暫存檔
         uses: actions/upload-artifact@v4
@@ -111,7 +116,7 @@ jobs:
           echo "RELEASE_TAG=${TAG}-lite" >> $GITHUB_OUTPUT
           echo "VERSION_TAG=${TAG}" >> $GITHUB_OUTPUT
 
-      - name: 發布 GitHub Release (保留舊版本)
+      - name: 發布 GitHub Release (保留歷史版本)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.RELEASE_TAG }}
@@ -121,7 +126,7 @@ jobs:
             - **源碼版本**: `${{ steps.tag.outputs.VERSION_TAG }}`
             - **Build Tags**: `no_tailscale,no_zerotier,no_easytier,no_fake_tcp` (已排除 `with_gvisor`)
             - **支援架構**: `linux-arm64`, `linux-armv7`
-            - **壓縮方式**: 最新版 UPX (`--ultra --best`)
+            - **壓縮工具**: UPX 5.x (`--best --lzma`)
           files: ./dist/*
           draft: false
           prerelease: false
