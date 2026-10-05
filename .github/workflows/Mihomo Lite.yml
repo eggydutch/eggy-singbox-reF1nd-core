@@ -10,6 +10,10 @@ on:
   schedule:
     - cron: '0 0 * * 0' # 每週日自動檢查並編譯最新版
 
+# 授予 GITHUB_TOKEN 建立與寫入 Release 的權限
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -49,7 +53,6 @@ jobs:
 
       - name: 安裝最新 UPX 5.x 壓縮工具
         run: |
-          # 自動從 GitHub Release 抓取 UPX 最新 5.x 版本的 Tag
           UPX_TAG=$(curl -s https://api.github.com/repos/upx/upx/releases/latest | jq -r .tag_name)
           UPX_VER=${UPX_TAG#v}
           echo "正在下載 UPX 最新版本: ${UPX_TAG}"
@@ -59,7 +62,6 @@ jobs:
           sudo mv "upx-${UPX_VER}-amd64_linux/upx" /usr/local/bin/
           rm -rf upx*
           
-          # 驗證 UPX 版本
           upx --version
 
       - name: 編譯 Mihomo Lite 核心
